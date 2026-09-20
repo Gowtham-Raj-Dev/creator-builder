@@ -1,30 +1,16 @@
-"use client";
-
 import React from "react";
-import { useParams } from "next/navigation";
-import { useLiveApp } from "@/context/LiveAppContext";
-import { DynamicPage } from "@/components/runtime/DynamicPage";
+import { LiveCustomPageWrapper } from "@/components/runtime/LiveCustomPageWrapper";
+import { getStaticPageParams } from "@/lib/storage/staticParams";
 
-export default function LiveCustomPageView() {
-  const params = useParams();
-  const { app } = useLiveApp();
+export function generateStaticParams() {
+  return getStaticPageParams();
+}
 
-  const pageLinkName = (params?.page as string) || "";
-
-  if (!app) return null;
-
-  const targetPage = app.pages.find((p) => p.linkName === pageLinkName);
-
-  if (!targetPage) {
-    return (
-      <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500 max-w-md mx-auto">
-        <h2 className="text-base font-bold text-slate-800">Page Not Found</h2>
-        <p className="text-xs text-slate-400 mt-1">
-          No page matching &quot;{pageLinkName}&quot; exists in this application schema.
-        </p>
-      </div>
-    );
-  }
-
-  return <DynamicPage page={targetPage} />;
+export default async function LiveCustomPageView({
+  params,
+}: {
+  params: Promise<{ page: string }>;
+}) {
+  const resolved = await params;
+  return <LiveCustomPageWrapper pageLinkName={resolved.page} />;
 }

@@ -1,12 +1,16 @@
-"use client";
-
 import React from "react";
-import { useParams } from "next/navigation";
 import { ReportBuilderView } from "@/components/builder/ReportBuilder/ReportBuilderView";
+import { getStaticReportParams } from "@/lib/storage/staticParams";
 
-export default function SingleReportBuilderPage() {
-  const params = useParams();
-  const reportLinkName = (params?.report as string) || "";
+export function generateStaticParams() {
+  return getStaticReportParams();
+}
 
-  return <ReportBuilderView reportLinkName={reportLinkName} />;
+export default async function SingleReportBuilderPage({
+  params,
+}: {
+  params: Promise<{ report: string }>;
+}) {
+  const resolved = await params;
+  return <ReportBuilderView reportLinkName={resolved.report} />;
 }

@@ -1,12 +1,16 @@
-"use client";
-
 import React from "react";
-import { useParams } from "next/navigation";
 import { FormBuilderWrapper } from "@/components/builder/FormBuilder/FormBuilderWrapper";
+import { getStaticFormParams } from "@/lib/storage/staticParams";
 
-export default function FormBuilderPage() {
-  const params = useParams();
-  const formLinkName = (params?.form as string) || "";
+export function generateStaticParams() {
+  return getStaticFormParams();
+}
 
-  return <FormBuilderWrapper formLinkName={formLinkName} />;
+export default async function FormBuilderPage({
+  params,
+}: {
+  params: Promise<{ form: string }>;
+}) {
+  const resolved = await params;
+  return <FormBuilderWrapper formLinkName={resolved.form} />;
 }

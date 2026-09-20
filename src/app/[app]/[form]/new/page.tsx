@@ -1,37 +1,16 @@
-"use client";
-
 import React from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useLiveApp } from "@/context/LiveAppContext";
-import { DynamicForm } from "@/components/runtime/DynamicForm";
+import { NewRecordView } from "@/components/runtime/NewRecordView";
+import { getStaticFormParams } from "@/lib/storage/staticParams";
 
-export default function NewRecordPage() {
-  const params = useParams();
-  const router = useRouter();
-  const { app } = useLiveApp();
+export function generateStaticParams() {
+  return getStaticFormParams();
+}
 
-  const formLinkName = (params?.form as string) || "";
-
-  if (!app) return null;
-
-  const targetForm = app.forms.find((f) => f.linkName === formLinkName);
-
-  if (!targetForm) {
-    return (
-      <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500 max-w-md mx-auto">
-        <h2 className="text-base font-bold text-slate-800">Form Not Found</h2>
-        <p className="text-xs text-slate-400 mt-1">
-          No form matching &quot;{formLinkName}&quot; exists in this application schema.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <DynamicForm
-      form={targetForm}
-      onSuccess={() => router.push(`/${app.linkName}/${targetForm.linkName}`)}
-      onCancel={() => router.push(`/${app.linkName}/${targetForm.linkName}`)}
-    />
-  );
+export default async function NewRecordPage({
+  params,
+}: {
+  params: Promise<{ form: string }>;
+}) {
+  const resolved = await params;
+  return <NewRecordView formLinkName={resolved.form} />;
 }
