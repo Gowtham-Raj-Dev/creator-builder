@@ -5,6 +5,7 @@ import { PageDefinition, PageComponent } from "@/types/schema";
 import { useLiveApp } from "@/context/LiveAppContext";
 import { Button } from "@/components/ui/Button";
 import Link from "next/link";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 import {
   evaluatePageExpression,
   computeChartData,
@@ -261,7 +262,7 @@ export const DynamicPage: React.FC<{ page: PageDefinition }> = ({ page }) => {
                   <h3 className="text-sm font-bold text-slate-900">{rep.name}</h3>
                 </div>
                 <Link
-                  href={`/${app.linkName}/reports/${rep.linkName}`}
+                  href={getLiveAppUrl(app.linkName, { report: rep.linkName })}
                   className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1"
                 >
                   View Full Report <ArrowRight className="w-3.5 h-3.5" />
@@ -331,8 +332,8 @@ export const DynamicPage: React.FC<{ page: PageDefinition }> = ({ page }) => {
             const defaultRep = app.reports.find((r) => r.sourceFormId === form.id);
             const count = (recordsMap[form.id] || []).length;
             const href = defaultRep
-              ? `/${app.linkName}/reports/${defaultRep.linkName}`
-              : `/${app.linkName}/${form.linkName}`;
+              ? getLiveAppUrl(app.linkName, { report: defaultRep.linkName })
+              : getLiveAppUrl(app.linkName, { form: form.linkName });
 
             return (
               <Link

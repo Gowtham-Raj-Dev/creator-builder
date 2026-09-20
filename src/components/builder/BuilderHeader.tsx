@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAppBuilder } from "@/context/AppBuilderContext";
 import { Button } from "@/components/ui/Button";
 import { ExternalLink, Save, ArrowLeft, Check, AlertCircle, Layers } from "lucide-react";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 
 export const BuilderHeader: React.FC<{ activeTab?: string }> = () => {
   const { currentApp, isDirty, lastSavedText, saveCurrentApp } = useAppBuilder();
@@ -59,7 +60,7 @@ export const BuilderHeader: React.FC<{ activeTab?: string }> = () => {
 
         <div className="flex items-center gap-2">
           <Link
-            href={`/${currentApp.linkName}`}
+            href={getLiveAppUrl(currentApp.linkName)}
             target="_blank"
             rel="noopener noreferrer"
           >

@@ -3,7 +3,7 @@
  */
 
 export function getStaticAppParams() {
-  return [{ app: "gowthamtest" }];
+  return [{ app: "gowthamtest" }, { app: "sweetpurchase" }];
 }
 
 export function getStaticFormParams() {
@@ -14,6 +14,12 @@ export function getStaticFormParams() {
     { app: "gowthamtest", form: "invoice" },
     { app: "gowthamtest", form: "purchase" },
     { app: "gowthamtest", form: "usage" },
+    { app: "sweetpurchase", form: "city" },
+    { app: "sweetpurchase", form: "customer" },
+    { app: "sweetpurchase", form: "product" },
+    { app: "sweetpurchase", form: "invoice" },
+    { app: "sweetpurchase", form: "purchase" },
+    { app: "sweetpurchase", form: "usage" },
   ];
 }
 
@@ -26,11 +32,18 @@ export function getStaticReportParams() {
     { app: "gowthamtest", report: "purchase_report" },
     { app: "gowthamtest", report: "usage_report" },
     { app: "gowthamtest", report: "stock_reconciliation" },
+    { app: "sweetpurchase", report: "customer_report" },
+    { app: "sweetpurchase", report: "city_report" },
+    { app: "sweetpurchase", report: "product_report" },
+    { app: "sweetpurchase", report: "invoice_report" },
+    { app: "sweetpurchase", report: "purchase_report" },
+    { app: "sweetpurchase", report: "usage_report" },
+    { app: "sweetpurchase", report: "stock_reconciliation" },
   ];
 }
 
 export function getStaticPageParams() {
-  return [{ app: "gowthamtest", page: "dashboard" }];
+  return [{ app: "gowthamtest", page: "dashboard" }, { app: "sweetpurchase", page: "dashboard" }];
 }
 
 export function getStaticRecordParams() {

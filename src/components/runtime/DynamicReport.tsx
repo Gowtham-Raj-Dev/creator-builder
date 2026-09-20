@@ -18,6 +18,7 @@ import { PrintModal } from "./PrintModal";
 import { ReconciliationReport } from "./ReconciliationReport";
 import { resolveLookupDisplay } from "@/lib/engine/lookupEngine";
 import { formatCurrency, formatDate } from "@/lib/utils/formatters";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 import {
   Search,
   Plus,
@@ -400,9 +401,9 @@ export const DynamicReport: React.FC<DynamicReportProps> = ({
 
     const targetRep = app.reports.find((r) => r.sourceFormId === targetForm.id);
     if (targetRep) {
-      router.push(`/${app.linkName}/reports/${targetRep.linkName}`);
+      router.push(getLiveAppUrl(app.linkName, { report: targetRep.linkName }));
     } else {
-      router.push(`/${app.linkName}/${targetForm.linkName}`);
+      router.push(getLiveAppUrl(app.linkName, { form: targetForm.linkName }));
     }
   };
 
@@ -616,7 +617,7 @@ export const DynamicReport: React.FC<DynamicReportProps> = ({
               </Button>
             ) : (
               app && (
-                <Link href={`/${app.linkName}/${form.linkName}/new`}>
+                <Link href={getLiveAppUrl(app.linkName, { form: form.linkName, action: "new" })}>
                   <Button size="sm" icon={<Plus className="w-4 h-4" />}>
                     + Add {form.name}
                   </Button>
@@ -942,7 +943,7 @@ export const DynamicReport: React.FC<DynamicReportProps> = ({
                           ) : (
                             app && (
                               <Link
-                                href={`/${app.linkName}/${form.linkName}/${rec.id}`}
+                                href={getLiveAppUrl(app.linkName, { form: form.linkName, recordId: rec.id })}
                                 className="p-1.5 text-slate-400 hover:text-blue-600 rounded-md hover:bg-blue-50 transition-colors"
                                 title="Edit Record"
                               >

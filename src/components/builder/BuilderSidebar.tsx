@@ -14,6 +14,7 @@ import {
   Plus,
   ChevronRight,
 } from "lucide-react";
+import { getBuilderUrl } from "@/lib/utils/routes";
 
 interface BuilderSidebarProps {
   onNewFormClick?: () => void;
@@ -25,20 +26,18 @@ export const BuilderSidebar: React.FC<BuilderSidebarProps> = ({ onNewFormClick }
 
   if (!currentApp) return null;
 
-  const appBase = `/builder/${currentApp.linkName}`;
+  const isEditorRunner = pathname === "/builder/editor" || pathname.startsWith("/builder/editor");
+  const searchStr = typeof window !== "undefined" ? window.location.search : "";
+  const currentTab = isEditorRunner ? new URLSearchParams(searchStr).get("tab") || "forms" : "";
 
-  const isActive = (path: string) => {
-    if (path === appBase) {
-      return pathname === appBase || pathname.startsWith(`${appBase}/forms`);
-    }
-    return pathname.startsWith(path);
-  };
+  const appBase = `/builder/${currentApp.linkName}`;
 
   const navItems = [
     {
       label: "Forms",
-      href: `${appBase}`,
-      activeMatch: (p: string) => p === appBase || p.includes("/forms"),
+      href: isEditorRunner ? getBuilderUrl(currentApp.linkName, { tab: "forms" }) : `${appBase}`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "forms" : p === appBase || p.includes("/forms"),
       icon: <FileText className="w-4 h-4" />,
       count: currentApp.forms.length,
       action: onNewFormClick ? (
@@ -57,22 +56,25 @@ export const BuilderSidebar: React.FC<BuilderSidebarProps> = ({ onNewFormClick }
     },
     {
       label: "Reports",
-      href: `${appBase}/reports`,
-      activeMatch: (p: string) => p.includes("/reports"),
+      href: isEditorRunner ? getBuilderUrl(currentApp.linkName, { tab: "reports" }) : `${appBase}/reports`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "reports" : p.includes("/reports"),
       icon: <TableProperties className="w-4 h-4" />,
       count: currentApp.reports.length,
     },
     {
       label: "Pages",
-      href: `${appBase}/pages`,
-      activeMatch: (p: string) => p.includes("/pages"),
+      href: isEditorRunner ? getBuilderUrl(currentApp.linkName, { tab: "pages" }) : `${appBase}/pages`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "pages" : p.includes("/pages"),
       icon: <LayoutTemplate className="w-4 h-4" />,
       count: currentApp.pages.length,
     },
     {
       label: "Workflows",
-      href: `${appBase}/workflows`,
-      activeMatch: (p: string) => p.includes("/workflows"),
+      href: isEditorRunner ? getBuilderUrl(currentApp.linkName, { tab: "workflows" }) : `${appBase}/workflows`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "workflows" : p.includes("/workflows"),
       icon: <Zap className="w-4 h-4" />,
       count: currentApp.workflows.length,
     },
@@ -81,15 +83,21 @@ export const BuilderSidebar: React.FC<BuilderSidebarProps> = ({ onNewFormClick }
   const settingsItems = [
     {
       label: "Data Relationships",
-      href: `${appBase}/relationships`,
-      activeMatch: (p: string) => p.includes("/relationships"),
+      href: isEditorRunner
+        ? getBuilderUrl(currentApp.linkName, { tab: "relationships" })
+        : `${appBase}/relationships`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "relationships" : p.includes("/relationships"),
       icon: <Network className="w-4 h-4" />,
       count: currentApp.relationships.length,
     },
     {
       label: "Application Settings",
-      href: `${appBase}/settings`,
-      activeMatch: (p: string) => p.includes("/settings"),
+      href: isEditorRunner
+        ? getBuilderUrl(currentApp.linkName, { tab: "settings" })
+        : `${appBase}/settings`,
+      activeMatch: (p: string) =>
+        isEditorRunner ? currentTab === "settings" : p.includes("/settings"),
       icon: <Settings className="w-4 h-4" />,
     },
   ];

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/FormControls";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { toLinkName, isValidLinkName, generateUniqueLinkName } from "@/lib/utils/linkName";
 import { generateId } from "@/lib/utils/idGenerator";
+import { getLiveAppUrl, getBuilderUrl } from "@/lib/utils/routes";
 import { useToast } from "@/context/ToastContext";
 import {
   Layers,
@@ -130,7 +131,7 @@ export default function BuilderHomePage() {
     await storageService.saveApp(newApp);
     showToast(`Application "${newApp.name}" created!`, "success");
     setCreateModalOpen(false);
-    router.push(`/builder/${newApp.linkName}`);
+    router.push(getBuilderUrl(newApp.linkName));
   };
 
   const handleDeleteConfirm = async () => {
@@ -293,7 +294,7 @@ export default function BuilderHomePage() {
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <Link href={`/${app.linkName}`} target="_blank" className="flex-1">
+                  <Link href={getLiveAppUrl(app.linkName)} target="_blank" className="flex-1">
                     <Button
                       variant="outline"
                       size="sm"
@@ -304,7 +305,7 @@ export default function BuilderHomePage() {
                     </Button>
                   </Link>
 
-                  <Link href={`/builder/${app.linkName}`} className="flex-1">
+                  <Link href={getBuilderUrl(app.linkName)} className="flex-1">
                     <Button
                       variant="primary"
                       size="sm"

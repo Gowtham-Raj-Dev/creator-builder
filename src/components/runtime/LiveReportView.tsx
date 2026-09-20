@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { useLiveApp } from "@/context/LiveAppContext";
 import { DynamicReport } from "@/components/runtime/DynamicReport";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 
 export const LiveReportView: React.FC<{ reportLinkName: string }> = ({ reportLinkName }) => {
   const router = useRouter();
@@ -41,8 +42,8 @@ export const LiveReportView: React.FC<{ reportLinkName: string }> = ({ reportLin
     <DynamicReport
       report={targetReport}
       form={sourceForm}
-      onAddRecord={() => router.push(`/${app.linkName}/${sourceForm.linkName}/new`)}
-      onEditRecord={(recId) => router.push(`/${app.linkName}/${sourceForm.linkName}/${recId}`)}
+      onAddRecord={() => router.push(getLiveAppUrl(app.linkName, { form: sourceForm.linkName, action: "new" }))}
+      onEditRecord={(recId) => router.push(getLiveAppUrl(app.linkName, { form: sourceForm.linkName, recordId: recId }))}
     />
   );
 };

@@ -15,6 +15,7 @@ import {
   Search,
   Plus,
 } from "lucide-react";
+import { getLiveAppUrl, getBuilderUrl } from "@/lib/utils/routes";
 
 export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { app, loading } = useLiveApp();
@@ -52,6 +53,13 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }
 
+  const isUniversalRunner = pathname === "/app" || pathname.startsWith("/app");
+  const searchStr = typeof window !== "undefined" ? window.location.search : "";
+  const currentParams = isUniversalRunner ? new URLSearchParams(searchStr) : null;
+  const currentReport = currentParams?.get("report");
+  const currentForm = currentParams?.get("form");
+  const currentPage = currentParams?.get("page");
+
   const appBase = `/${app.linkName}`;
 
   return (
@@ -80,7 +88,7 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
 
         <div className="flex items-center gap-3">
           <Link
-            href={`/builder/${app.linkName}`}
+            href={getBuilderUrl(app.linkName)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-all shadow-3xs hover:border-slate-400"
           >
             <Edit className="w-3.5 h-3.5 text-blue-600" />
@@ -106,8 +114,12 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
                 </div>
                 <nav className="space-y-0.5">
                   {app.pages.map((page) => {
-                    const href = `${appBase}/pages/${page.linkName}`;
-                    const active = pathname === href;
+                    const href = isUniversalRunner
+                      ? getLiveAppUrl(app.linkName, { page: page.linkName })
+                      : `${appBase}/pages/${page.linkName}`;
+                    const active = isUniversalRunner
+                      ? currentPage === page.linkName
+                      : pathname === href;
                     return (
                       <Link
                         key={page.id}
@@ -136,10 +148,18 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
               <nav className="space-y-1">
                 {app.forms.map((form) => {
                   const defaultReport = app.reports.find((r) => r.sourceFormId === form.id && r.reportType !== "reconciliation");
-                  const reportHref = defaultReport
+                  const reportHref = isUniversalRunner
+                    ? defaultReport
+                      ? getLiveAppUrl(app.linkName, { report: defaultReport.linkName })
+                      : getLiveAppUrl(app.linkName, { form: form.linkName })
+                    : defaultReport
                     ? `${appBase}/reports/${defaultReport.linkName}`
                     : `${appBase}/${form.linkName}`;
-                  const isReportActive = pathname.startsWith(reportHref);
+                  const isReportActive = isUniversalRunner
+                    ? defaultReport
+                      ? currentReport === defaultReport.linkName
+                      : currentForm === form.linkName && !currentReport
+                    : pathname.startsWith(reportHref);
 
                   return (
                     <div key={form.id} className="space-y-0.5">
@@ -173,8 +193,12 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
                   {app.reports
                     .filter((r) => r.reportType === "reconciliation")
                     .map((r) => {
-                      const href = `${appBase}/reports/${r.linkName}`;
-                      const active = pathname === href;
+                      const href = isUniversalRunner
+                        ? getLiveAppUrl(app.linkName, { report: r.linkName })
+                        : `${appBase}/reports/${r.linkName}`;
+                      const active = isUniversalRunner
+                        ? currentReport === r.linkName
+                        : pathname === href;
                       return (
                         <Link
                           key={r.id}

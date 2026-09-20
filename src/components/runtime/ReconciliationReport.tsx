@@ -6,6 +6,7 @@ import { ReportDefinition, FormDefinition, RecordDefinition } from "@/types/sche
 import { useLiveApp } from "@/context/LiveAppContext";
 import { Button } from "@/components/ui/Button";
 import { formatCurrency, formatDate } from "@/lib/utils/formatters";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 import {
   Search,
   SlidersHorizontal,
@@ -308,7 +309,7 @@ export const ReconciliationReport: React.FC<ReconciliationReportProps> = ({
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
           {inflowForm && (
-            <Link href={`/${app?.linkName}/${inflowForm.linkName}/new`}>
+            <Link href={getLiveAppUrl(app?.linkName || "", { form: inflowForm.linkName, action: "new" })}>
               <Button size="sm" variant="outline" icon={<TrendingUp className="w-3.5 h-3.5 text-emerald-600" />}>
                 + New Purchase Entry
               </Button>
@@ -316,7 +317,7 @@ export const ReconciliationReport: React.FC<ReconciliationReportProps> = ({
           )}
 
           {outflowForm && (
-            <Link href={`/${app?.linkName}/${outflowForm.linkName}/new`}>
+            <Link href={getLiveAppUrl(app?.linkName || "", { form: outflowForm.linkName, action: "new" })}>
               <Button size="sm" variant="outline" icon={<TrendingDown className="w-3.5 h-3.5 text-amber-600" />}>
                 + New Material Usage
               </Button>

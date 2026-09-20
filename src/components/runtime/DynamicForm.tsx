@@ -10,6 +10,7 @@ import { validateFormData, ValidationErrors } from "@/lib/engine/validationEngin
 import { executeWorkflows } from "@/lib/engine/workflowEngine";
 import { useToast } from "@/context/ToastContext";
 import { Save, ArrowLeft, AlertCircle, X } from "lucide-react";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 
 interface DynamicFormProps {
   form: FormDefinition;
@@ -316,9 +317,9 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
         // Find default report to redirect
         const defaultRep = app.reports.find((r) => r.sourceFormId === form.id);
         if (defaultRep) {
-          router.push(`/${app.linkName}/reports/${defaultRep.linkName}`);
+          router.push(getLiveAppUrl(app.linkName, { report: defaultRep.linkName }));
         } else {
-          router.push(`/${app.linkName}`);
+          router.push(getLiveAppUrl(app.linkName));
         }
       }
     } catch (err) {

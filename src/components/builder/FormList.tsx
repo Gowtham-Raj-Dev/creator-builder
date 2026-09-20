@@ -19,6 +19,7 @@ import {
   ArrowRight,
   Layers,
 } from "lucide-react";
+import { getLiveAppUrl, getBuilderUrl } from "@/lib/utils/routes";
 
 export const FormList: React.FC = () => {
   const { currentApp, createForm, deleteForm, duplicateForm } = useAppBuilder();
@@ -177,7 +178,7 @@ export const FormList: React.FC = () => {
                     <div className="flex items-center gap-2">
                       {defaultReport && (
                         <Link
-                          href={`/${currentApp.linkName}/reports/${defaultReport.linkName}`}
+                          href={getLiveAppUrl(currentApp.linkName, { report: defaultReport.linkName })}
                           target="_blank"
                           className="text-[11px] text-slate-500 hover:text-blue-600 flex items-center gap-1"
                         >
@@ -185,7 +186,7 @@ export const FormList: React.FC = () => {
                         </Link>
                       )}
 
-                      <Link href={`/builder/${currentApp.linkName}/forms/${form.linkName}`}>
+                      <Link href={getBuilderUrl(currentApp.linkName, { tab: "forms", form: form.linkName })}>
                         <Button
                           variant="primary"
                           size="sm"

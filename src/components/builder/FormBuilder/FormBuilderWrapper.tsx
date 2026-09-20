@@ -8,6 +8,7 @@ import { FormBuilderCanvas } from "./FormBuilderCanvas";
 import { FieldPropertiesPanel } from "./FieldPropertiesPanel";
 import { FieldType, FieldDefinition } from "@/types/schema";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { getBuilderUrl } from "@/lib/utils/routes";
 
 interface FormBuilderWrapperProps {
   formLinkName: string;
@@ -88,7 +89,7 @@ export const FormBuilderWrapper: React.FC<FormBuilderWrapperProps> = ({ formLink
         onDeleteField={handleDeleteField}
         onReorderFields={(from, to) => reorderFieldsInForm(currentForm.id, from, to)}
         onUpdateFormColumns={(cols) => updateForm(currentForm.id, { columns: cols })}
-        onNavigateToWorkflows={() => router.push(`/builder/${currentApp.linkName}/workflows`)}
+        onNavigateToWorkflows={() => router.push(getBuilderUrl(currentApp.linkName, { tab: "workflows" }))}
       />
 
       {/* 3. Right Field Properties Panel (Requirement 7 & 10) */}

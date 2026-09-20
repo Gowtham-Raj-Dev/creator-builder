@@ -5,6 +5,7 @@ import { useAppBuilder } from "@/context/AppBuilderContext";
 import { Badge } from "@/components/ui/FormControls";
 import { Network, Search, Table, ArrowRight, Layers, ExternalLink } from "lucide-react";
 import Link from "next/link";
+import { getBuilderUrl } from "@/lib/utils/routes";
 
 export const RelationshipsView: React.FC = () => {
   const { currentApp } = useAppBuilder();
@@ -132,7 +133,7 @@ export const RelationshipsView: React.FC = () => {
                       <span className="text-xs font-bold text-slate-900">{form.name}</span>
                     </div>
                     <Link
-                      href={`/builder/${currentApp.linkName}/forms/${form.linkName}`}
+                      href={getBuilderUrl(currentApp.linkName, { tab: "forms", form: form.linkName })}
                       className="text-[11px] text-blue-600 hover:text-blue-800 flex items-center gap-1"
                     >
                       Edit <ExternalLink className="w-3 h-3" />

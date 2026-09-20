@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { useLiveApp } from "@/context/LiveAppContext";
 import { DynamicForm } from "@/components/runtime/DynamicForm";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 
 export const NewRecordView: React.FC<{ formLinkName: string }> = ({ formLinkName }) => {
   const router = useRouter();
@@ -27,8 +28,8 @@ export const NewRecordView: React.FC<{ formLinkName: string }> = ({ formLinkName
   return (
     <DynamicForm
       form={targetForm}
-      onSuccess={() => router.push(`/${app.linkName}/${targetForm.linkName}`)}
-      onCancel={() => router.push(`/${app.linkName}/${targetForm.linkName}`)}
+      onSuccess={() => router.push(getLiveAppUrl(app.linkName, { form: targetForm.linkName }))}
+      onCancel={() => router.push(getLiveAppUrl(app.linkName, { form: targetForm.linkName }))}
     />
   );
 };

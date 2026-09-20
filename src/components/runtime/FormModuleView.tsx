@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useLiveApp } from "@/context/LiveAppContext";
 import { DynamicReport } from "@/components/runtime/DynamicReport";
 import { ReportDefinition } from "@/types/schema";
+import { getLiveAppUrl } from "@/lib/utils/routes";
 
 export const FormModuleView: React.FC<{ formLinkName: string }> = ({ formLinkName }) => {
   const router = useRouter();
@@ -48,8 +49,8 @@ export const FormModuleView: React.FC<{ formLinkName: string }> = ({ formLinkNam
     <DynamicReport
       report={defaultReport}
       form={targetForm}
-      onAddRecord={() => router.push(`/${app.linkName}/${targetForm.linkName}/new`)}
-      onEditRecord={(recId) => router.push(`/${app.linkName}/${targetForm.linkName}/${recId}`)}
+      onAddRecord={() => router.push(getLiveAppUrl(app.linkName, { form: targetForm.linkName, action: "new" }))}
+      onEditRecord={(recId) => router.push(getLiveAppUrl(app.linkName, { form: targetForm.linkName, recordId: recId }))}
     />
   );
 };

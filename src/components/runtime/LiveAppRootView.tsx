@@ -6,6 +6,7 @@ import { DynamicPage } from "@/components/runtime/DynamicPage";
 import { DynamicReport } from "@/components/runtime/DynamicReport";
 import { Layers } from "lucide-react";
 import Link from "next/link";
+import { getBuilderUrl } from "@/lib/utils/routes";
 
 export const LiveAppRootView: React.FC = () => {
   const { app } = useLiveApp();
@@ -47,7 +48,7 @@ export const LiveAppRootView: React.FC = () => {
         This application has no forms or pages yet. Open the builder to create your first form.
       </p>
       <Link
-        href={`/builder/${app.linkName}`}
+        href={getBuilderUrl(app.linkName)}
         className="inline-block text-xs bg-blue-600 text-white font-medium px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
       >
         Open in Builder
