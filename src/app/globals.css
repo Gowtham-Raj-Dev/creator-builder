@@ -56,3 +56,29 @@ body {
   overflow-x: hidden;
   scrollbar-gutter: stable;
 }
+
+/* ── Interactive affordance: everything clickable gets a pointer (Tailwind v4 removed the button default) ── */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a[href],
+select:not(:disabled),
+summary,
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="color"]:not(:disabled),
+input[type="file"]:not(:disabled),
+input[type="range"]:not(:disabled),
+[draggable="true"],
+.clickable {
+  cursor: pointer;
+}
+button:disabled,
+select:disabled,
+input:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+tr[onclick], .row-clickable { cursor: pointer; }

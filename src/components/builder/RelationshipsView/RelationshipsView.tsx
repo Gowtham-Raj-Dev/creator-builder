@@ -3,7 +3,7 @@
 import React from "react";
 import { useAppBuilder } from "@/context/AppBuilderContext";
 import { Badge } from "@/components/ui/FormControls";
-import { Network, Search, Table, ArrowRight, Layers, ExternalLink } from "lucide-react";
+import { Network, ArrowRight, Layers, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { getBuilderUrl } from "@/lib/utils/routes";
 
@@ -118,10 +118,6 @@ export const RelationshipsView: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {forms.map((form) => {
-              const lookupFields = form.fields.filter(
-                (f) => f.type === "lookup" || f.type === "subform"
-              );
-
               return (
                 <div
                   key={form.id}

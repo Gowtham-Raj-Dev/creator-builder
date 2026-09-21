@@ -1,327 +1,200 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import { FormDefinition, RecordDefinition, WorkflowDefinition } from "@/types/schema";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { FormDefinition, FieldDefinition, RecordDefinition, WorkflowDefinition } from "@/types/schema";
 import { useLiveApp } from "@/context/LiveAppContext";
+import { useAuth } from "@/context/AuthContext";
 import { DynamicField } from "./DynamicField";
+import { QuickCreateContext } from "./LookupField";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { validateFormData, ValidationErrors } from "@/lib/engine/validationEngine";
-import { executeWorkflows } from "@/lib/engine/workflowEngine";
+import { executeWorkflows, PopupAlert, WorkflowResult } from "@/lib/engine/workflowEngine";
+import { buildFormulaContext, evaluateFormula, coerceFormulaResult, resolveDefaultValue } from "@/lib/engine/formulaEngine";
+import { computeRollup } from "@/lib/engine/rollupEngine";
 import { useToast } from "@/context/ToastContext";
-import { Save, ArrowLeft, AlertCircle, X } from "lucide-react";
-import { getLiveAppUrl } from "@/lib/utils/routes";
+import { Save, ArrowLeft, AlertCircle, X, ChevronDown, Info, AlertTriangle, HelpCircle, CheckCircle2, Clock } from "lucide-react";
 
 interface DynamicFormProps {
   form: FormDefinition;
   record?: RecordDefinition | null;
-  onSuccess?: () => void;
+  onSuccess?: (rec: RecordDefinition | null) => void;
   onCancel?: () => void;
+  prefill?: Record<string, any>;
+  embedded?: boolean; // inside modal / page widget: compact header, no redirect
+  hideHeader?: boolean;
 }
 
-export const DynamicForm: React.FC<DynamicFormProps> = ({
-  form,
-  record,
-  onSuccess,
-  onCancel,
-}) => {
-  const router = useRouter();
-  const { app, recordsMap, createRecord, updateRecord } = useLiveApp();
+const WIDTH_SPAN: Record<string, string> = { full: "md:col-span-6", half: "md:col-span-3", third: "md:col-span-2", two_thirds: "md:col-span-4" };
+const ALWAYS_FULL = new Set(["subform", "section", "richtext", "file", "image", "address", "signature"]);
+
+function spanFor(field: FieldDefinition, columns: 1 | 2 | 3): string {
+  if (ALWAYS_FULL.has(field.type)) return "md:col-span-6";
+  if (field.width) return WIDTH_SPAN[field.width];
+  return columns === 1 ? "md:col-span-6" : columns === 3 ? "md:col-span-2" : "md:col-span-3";
+}
+
+export const DynamicForm: React.FC<DynamicFormProps> = ({ form, record, onSuccess, onCancel, prefill, embedded, hideHeader }) => {
+  const { app, recordsMap, createRecord, updateRecord, applyWorkflowSideEffects, permissions, noteRecent } = useLiveApp();
+  const { user } = useAuth();
   const { showToast } = useToast();
+  const searchParams = useSearchParams();
 
   const isEditMode = Boolean(record);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [errors, setErrors] = useState<ValidationErrors>({});
   const [hiddenFields, setHiddenFields] = useState<Record<string, boolean>>({});
   const [readonlyFields, setReadonlyFields] = useState<Record<string, boolean>>({});
-  const [formAlert, setFormAlert] = useState<{
-    type: "info" | "warning" | "error";
-    text: string;
-  } | null>(null);
-  const [popupModal, setPopupModal] = useState<{
-    title?: string;
-    message: string;
-    fields?: Array<{ label: string; linkName?: string; fieldId: string; error: string }>;
-    type?: "warning" | "error" | "info";
-  } | null>(null);
+  const [formAlert, setFormAlert] = useState<{ type: "info" | "warning" | "error" | "success"; text: string } | null>(null);
+  const [popup, setPopup] = useState<(PopupAlert & { fields?: Array<{ label: string; fieldId: string; error: string }>; onContinue?: () => void; onCancel?: () => void }) | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [quickCreate, setQuickCreate] = useState<{ formId: string; onCreated: (rec: RecordDefinition) => void } | null>(null);
+  const [initialized, setInitialized] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
+  const saveAndNewRef = useRef(false);
 
-  const workflows: WorkflowDefinition[] = useMemo(
-    () => app?.workflows.filter((w) => w.formId === form.id && w.active) || [],
-    [app?.workflows, form.id]
-  );
+  const formPerm = permissions.form(form.id);
+  const workflows: WorkflowDefinition[] = useMemo(() => app?.workflows.filter((w) => w.formId === form.id && w.active) || [], [app?.workflows, form.id]);
+  const wfCtx = useMemo(() => ({ app, recordsMap, user: user ? { email: user.email, name: user.name } : null, record, isEdit: isEditMode }), [app, recordsMap, user, record, isEditMode]);
 
-  // Initialize form state
+  // ── initialise ────────────────────────────────────────────────────────────
   useEffect(() => {
     const initial: Record<string, any> = {};
+    const ctx = { __user: user ? { email: user.email, name: user.name } : null };
+    const urlPrefill: Record<string, any> = {};
+    searchParams?.forEach((v, k) => { if (k.startsWith("prefill_")) urlPrefill[k.slice(8)] = v; });
 
+    const lastRecord = (recordsMap[form.id] || [])[0];
     for (const field of form.fields) {
-      if (record && record.data && field.id in record.data) {
-        initial[field.id] = record.data[field.id];
-      } else {
-        if (field.defaultValue !== undefined) {
-          initial[field.id] = field.defaultValue;
-        } else if (field.type === "checkbox") {
-          initial[field.id] = false;
-        } else if (field.type === "subform") {
-          initial[field.id] = [];
-        } else {
-          initial[field.id] = "";
-        }
-      }
+      if (field.type === "section") continue;
+      if (record?.data && field.id in record.data) { initial[field.id] = record.data[field.id]; continue; }
+      const pf = prefill?.[field.id] ?? prefill?.[field.linkName] ?? urlPrefill[field.linkName] ?? urlPrefill[field.id];
+      if (pf !== undefined) { initial[field.id] = ["number", "currency", "decimal", "percentage"].includes(field.type) ? Number(pf) : field.type === "checkbox" ? pf === "true" || pf === true : pf; continue; }
+      let dv = resolveDefaultValue(field, ctx);
+      if (typeof field.defaultValue === "string" && field.defaultValue.toLowerCase() === "lastrecord" && lastRecord) dv = lastRecord.data?.[field.id];
+      if (dv !== undefined) initial[field.id] = dv;
+      else if (field.type === "checkbox") initial[field.id] = false;
+      else if (field.type === "subform" || (field.type === "lookup" && field.lookup?.multiple) || field.type === "multiselect") initial[field.id] = [];
+      else initial[field.id] = "";
     }
-
-    // Run onLoad workflows
-    const loadResult = executeWorkflows(workflows, "onLoad", undefined, initial, form, app?.forms);
+    const loadResult = executeWorkflows(workflows, "onLoad", undefined, initial, form, wfCtx);
     setFormData(loadResult.updatedValues);
     setHiddenFields(loadResult.fieldVisibility);
     setReadonlyFields(loadResult.fieldReadonly);
+    if (loadResult.popupAlert) setPopup(loadResult.popupAlert);
+    const msg = pickMessage(loadResult);
+    setFormAlert(msg);
+    setErrors({});
+    const col: Record<string, boolean> = {};
+    form.fields.forEach((f) => { if (f.type === "section" && f.section?.collapsedByDefault) col[f.id] = true; });
+    setCollapsed(col);
+    setInitialized(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.id, record?.id, resetKey]);
 
-    if (loadResult.popupAlert) {
-      setPopupModal(loadResult.popupAlert);
+  // ── computed values (formulas / rollups) ──────────────────────────────────
+  const computed = useMemo(() => {
+    if (!app) return {};
+    const values: Record<string, any> = { ...formData };
+    for (const f of form.fields) if (f.type === "rollup" && f.rollup?.sourceFormId && record) values[f.id] = computeRollup(f.rollup, record.id, app, recordsMap);
+    const formulaFields = form.fields.filter((f) => f.type === "formula" && f.formula?.expression);
+    for (let pass = 0; pass < 2; pass++) {
+      const ctx = buildFormulaContext(form, values, { forms: app.forms, recordsMap, user, record });
+      for (const f of formulaFields) values[f.id] = coerceFormulaResult(evaluateFormula(f.formula!.expression, ctx), f.formula!.resultType, f.formula!.decimalPlaces);
     }
+    const out: Record<string, any> = {};
+    for (const f of form.fields) if (f.type === "formula" || f.type === "rollup") out[f.id] = values[f.id];
+    return out;
+  }, [formData, form, app, recordsMap, user, record]);
 
-    if (loadResult.messages.length > 0) {
-      const err = loadResult.messages.find((m) => m.type === "error");
-      const warn = loadResult.messages.find((m) => m.type === "warning");
-      setFormAlert(err || warn || loadResult.messages[0]);
-    } else {
-      setFormAlert(null);
-    }
-  }, [form, record, workflows, app?.forms]);
+  const fullValues = useMemo(() => ({ ...formData, ...computed }), [formData, computed]);
+  const formulaCtx = useMemo(() => (app ? buildFormulaContext(form, fullValues, { forms: app.forms, recordsMap, user, record }) : fullValues), [app, form, fullValues, recordsMap, user, record]);
 
-  // Handle field change and run onUserInput workflows
-  const handleFieldChange = (fieldId: string, value: any) => {
-    const updatedValues = { ...formData, [fieldId]: value };
+  const isFieldHidden = useCallback(
+    (field: FieldDefinition) => {
+      if (field.hidden) return true;
+      if (hiddenFields[field.id]) return true;
+      if (permissions.fieldRule(form.id, field.id) === "hidden") return true;
+      if (field.visibilityRule) return !evaluateFormula(field.visibilityRule, formulaCtx);
+      return false;
+    },
+    [hiddenFields, permissions, form.id, formulaCtx]
+  );
 
-    // Automatic subtotal & total calculation if form contains subform items, subtotal, and tax
-    const subformField = form.fields.find((f) => f.type === "subform");
-    const subtotalField = form.fields.find(
-      (f) => f.linkName === "subtotal" || f.label.toLowerCase().includes("subtotal")
-    );
-    const taxField = form.fields.find(
-      (f) => f.linkName.includes("tax") || f.label.toLowerCase().includes("tax")
-    );
-    const totalField = form.fields.find(
-      (f) => f.linkName.includes("total") || f.label.toLowerCase().includes("total")
-    );
+  const isFieldReadonly = useCallback(
+    (field: FieldDefinition) => Boolean(readonlyFields[field.id]) || permissions.fieldRule(form.id, field.id) === "readonly" || (isEditMode && !formPerm.edit),
+    [readonlyFields, permissions, form.id, isEditMode, formPerm.edit]
+  );
 
-    if (subformField && (fieldId === subformField.id || fieldId === taxField?.id)) {
-      const rows = Array.isArray(updatedValues[subformField.id])
-        ? updatedValues[subformField.id]
-        : [];
-      let sum = 0;
-      for (const r of rows) {
-        // Find amount column or rate * qty
-        const amtVal = r.col_item_amount ?? r.amount;
-        if (amtVal !== undefined && !isNaN(Number(amtVal))) {
-          sum += Number(amtVal);
-        } else {
-          const q = Number(r.col_item_quantity ?? r.quantity) || 0;
-          const rt = Number(r.col_item_rate ?? r.rate) || 0;
-          sum += q * rt;
-        }
-      }
-
-      if (subtotalField) {
-        updatedValues[subtotalField.id] = sum;
-      }
-
-      if (totalField) {
-        const taxRate = taxField ? Number(updatedValues[taxField.id]) || 0 : 0;
-        const total = sum + (sum * taxRate) / 100;
-        updatedValues[totalField.id] = Math.round(total * 100) / 100;
-      }
-    }
-
-    // Run onUserInput workflows (Requirement 31-34)
-    const wfResult = executeWorkflows(
-      workflows,
-      "onUserInput",
-      fieldId,
-      updatedValues,
-      form,
-      app?.forms
-    );
-
-    setFormData(wfResult.updatedValues);
-
-    // Update visibility and readonly
-    if (Object.keys(wfResult.fieldVisibility).length > 0) {
-      setHiddenFields((prev) => ({ ...prev, ...wfResult.fieldVisibility }));
-    }
-    if (Object.keys(wfResult.fieldReadonly).length > 0) {
-      setReadonlyFields((prev) => ({ ...prev, ...wfResult.fieldReadonly }));
-    }
-
-    // Clear previous error for this field
-    if (errors[fieldId]) {
+  const applyWorkflowResult = useCallback(
+    (res: WorkflowResult, fieldId?: string) => {
+      if (Object.keys(res.fieldVisibility).length) setHiddenFields((p) => ({ ...p, ...res.fieldVisibility }));
+      if (Object.keys(res.fieldReadonly).length) setReadonlyFields((p) => ({ ...p, ...res.fieldReadonly }));
       setErrors((prev) => {
         const next = { ...prev };
-        delete next[fieldId];
+        if (fieldId) delete next[fieldId];
+        Object.assign(next, res.validationErrors);
         return next;
       });
-    }
+      if (res.popupAlert) setPopup(res.popupAlert);
+      const msg = pickMessage(res);
+      setFormAlert(msg);
+      if (msg && (msg.type === "warning" || msg.type === "error")) showToast(msg.text, msg.type);
+    },
+    [showToast]
+  );
 
-    // If workflow generated errors or messages
-    if (wfResult.validationErrors[fieldId]) {
-      setErrors((prev) => ({ ...prev, [fieldId]: wfResult.validationErrors[fieldId] }));
-    }
+  // ── field change ──────────────────────────────────────────────────────────
+  const handleFieldChange = (field: FieldDefinition, value: any, meta?: { lookupRecord?: RecordDefinition | RecordDefinition[]; subform?: { changedColumnId?: string; rowIndex?: number } }) => {
+    const updated = { ...formData, [field.id]: value };
 
-    if (wfResult.popupAlert) {
-      setPopupModal(wfResult.popupAlert);
-    }
-
-    if (wfResult.messages.length > 0) {
-      const err = wfResult.messages.find((m) => m.type === "error");
-      const warn = wfResult.messages.find((m) => m.type === "warning");
-      const displayMsg = err || warn || wfResult.messages[0];
-      setFormAlert(displayMsg);
-      if (displayMsg.type === "warning" || displayMsg.type === "error") {
-        showToast(displayMsg.text, displayMsg.type);
+    // top-level lookup auto-fill
+    if (field.type === "lookup" && field.lookup?.autoFill?.length) {
+      const rec = Array.isArray(meta?.lookupRecord) ? meta!.lookupRecord[0] : meta?.lookupRecord || (recordsMap[field.lookup.targetFormId] || []).find((r) => r.id === value);
+      for (const af of field.lookup.autoFill) {
+        const target = form.fields.find((f) => f.id === af.targetFieldId || f.linkName === af.targetFieldId);
+        if (target) updated[target.id] = rec ? rec.data?.[af.sourceFieldId] ?? "" : "";
       }
-    } else {
-      setFormAlert(null);
+      // cascading children reset
+      for (const f of form.fields) if (f.type === "lookup" && f.lookup?.cascade?.parentFieldId === field.id) updated[f.id] = f.lookup.multiple ? [] : "";
     }
+
+    let res = executeWorkflows(workflows, "onUserInput", field.id, updated, form, wfCtx);
+    if (meta?.subform?.changedColumnId) {
+      const res2 = executeWorkflows(workflows, "onUserInput", `${field.id}.${meta.subform.changedColumnId}`, res.updatedValues, form, wfCtx);
+      res = { ...res2, fieldVisibility: { ...res.fieldVisibility, ...res2.fieldVisibility }, fieldReadonly: { ...res.fieldReadonly, ...res2.fieldReadonly }, messages: [...res.messages, ...res2.messages], popupAlert: res2.popupAlert || res.popupAlert, validationErrors: { ...res.validationErrors, ...res2.validationErrors } };
+    }
+    setFormData(res.updatedValues);
+    applyWorkflowResult(res, field.id);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormAlert(null);
+  // ── submit ────────────────────────────────────────────────────────────────
+  const persist = async (data: Record<string, any>, wfResults: WorkflowResult[]) => {
     setIsSubmitting(true);
-
-    // 1. Validate Form Data
-    const existingRecords = recordsMap[form.id] || [];
-    const validationErrors = validateFormData(form, formData, existingRecords, record?.id);
-
-    // 2. Run onValidate & onSubmit workflows
-    const wfValidate = executeWorkflows(workflows, "onValidate", undefined, formData, form, app?.forms);
-    const wfSubmit = executeWorkflows(workflows, "onSubmit", undefined, formData, form, app?.forms);
-    const combinedErrors = {
-      ...validationErrors,
-      ...wfValidate.validationErrors,
-      ...wfSubmit.validationErrors,
-    };
-
-    if (wfSubmit.messages.length > 0 || wfValidate.messages.length > 0) {
-      const allMsgs = [...wfSubmit.messages, ...wfValidate.messages];
-      const err = allMsgs.find((m) => m.type === "error");
-      const warn = allMsgs.find((m) => m.type === "warning");
-      setFormAlert(err || warn || allMsgs[0]);
-    }
-
-    const popup = wfSubmit.popupAlert || wfValidate.popupAlert;
-
-    // Collect all field-level issues
-    const fieldIssues: Array<{ label: string; linkName?: string; fieldId: string; error: string }> = [];
-
-    // Check mandatory & validation errors
-    for (const [key, errMsg] of Object.entries(combinedErrors)) {
-      const matchedField = form.fields.find((f) => f.id === key || f.linkName === key);
-      fieldIssues.push({
-        fieldId: matchedField?.id || key,
-        label: matchedField?.label || key,
-        linkName: matchedField?.linkName,
-        error: errMsg,
-      });
-    }
-
-    // Also check if popup message references any form field that is empty
-    if (popup) {
-      for (const field of form.fields) {
-        const val = formData[field.id];
-        const isBlank =
-          val === undefined ||
-          val === null ||
-          (typeof val === "string" && val.trim() === "") ||
-          (Array.isArray(val) && val.length === 0);
-
-        if (
-          isBlank &&
-          (popup.message.toLowerCase().includes(field.label.toLowerCase()) ||
-            popup.message.toLowerCase().includes(field.linkName.toLowerCase()))
-        ) {
-          if (!fieldIssues.some((issue) => issue.fieldId === field.id)) {
-            fieldIssues.push({
-              fieldId: field.id,
-              label: field.label,
-              linkName: field.linkName,
-              error: `${field.label} cannot be empty. Please fill in or select a valid value.`,
-            });
-            combinedErrors[field.id] = `${field.label} cannot be empty`;
-          }
-        }
-      }
-    }
-
-    const shouldBlock =
-      fieldIssues.length > 0 ||
-      Boolean(popup) ||
-      wfValidate.shouldBlockSubmit ||
-      wfSubmit.shouldBlockSubmit;
-
-    if (shouldBlock) {
-      setErrors(combinedErrors);
-      setIsSubmitting(false);
-
-      const modalTitle =
-        popup?.title ||
-        (fieldIssues.length > 0
-          ? "Form Submission Blocked: Mandatory Fields Missing"
-          : "Workflow Validation Alert");
-
-      const modalMessage =
-        popup?.message ||
-        (fieldIssues.length > 0
-          ? `Data was not submitted. The following mandatory field${fieldIssues.length > 1 ? "s" : ""} cannot be empty. Please complete the required field${fieldIssues.length > 1 ? "s" : ""} to proceed.`
-          : "Form submission has been blocked by workflow rules. Please review and correct your input.");
-
-      setPopupModal({
-        title: modalTitle,
-        message: modalMessage,
-        fields: fieldIssues,
-        type: "error",
-      });
-
-      // Highlight & smoothly scroll to the first invalid field
-      if (fieldIssues.length > 0) {
-        const firstFieldId = fieldIssues[0].fieldId;
-        setTimeout(() => {
-          const el = document.getElementById(`field-container-${firstFieldId}`);
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-            const inputEl = el.querySelector<HTMLElement>("input, select, textarea, button");
-            if (inputEl) inputEl.focus();
-          }
-        }, 150);
-      }
-
-      // CRITICAL: Stop here. Data MUST NOT be submitted.
-      return;
-    }
-
-    // 3. Save / Update Record
     try {
+      let saved: RecordDefinition | null = null;
       if (isEditMode && record) {
-        await updateRecord(form.id, record.id, formData);
+        const ok = await updateRecord(form.id, record.id, data);
+        saved = ok ? { ...record, data: { ...record.data, ...data } } : null;
       } else {
-        await createRecord(form.id, formData);
+        saved = await createRecord(form.id, data);
       }
-
-      // 4. Run onSuccess workflows
-      executeWorkflows(workflows, "onSuccess", undefined, formData, form);
-
-      if (onSuccess) {
-        onSuccess();
-      } else if (app) {
-        // Find default report to redirect
-        const defaultRep = app.reports.find((r) => r.sourceFormId === form.id);
-        if (defaultRep) {
-          router.push(getLiveAppUrl(app.linkName, { report: defaultRep.linkName }));
-        } else {
-          router.push(getLiveAppUrl(app.linkName));
-        }
+      if (!saved) return;
+      const successRes = executeWorkflows(workflows, "onSuccess", undefined, { ...saved.data }, form, { ...wfCtx, record: saved });
+      for (const r of [...wfResults, successRes]) await applyWorkflowSideEffects(r, form.id, saved.id);
+      const title = form.titleFieldId ? String(saved.data?.[form.titleFieldId] ?? saved.id) : saved.id;
+      noteRecent(form.id, saved.id, title);
+      const msg = pickMessage(successRes);
+      if (msg?.type === "info" || msg?.type === "success") showToast(msg.text, "success");
+      if (saveAndNewRef.current) {
+        saveAndNewRef.current = false;
+        setResetKey((k) => k + 1);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
       }
+      onSuccess?.(saved);
     } catch (err) {
       console.error("Form submit error:", err);
       showToast("Failed to save record", "error");
@@ -330,236 +203,245 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
     }
   };
 
-  return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-3xs flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-slate-900">
-              {isEditMode ? `Edit ${form.name}` : `New ${form.name}`}
-            </h1>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {form.description || "Enter all required details and save your record."}
-          </p>
-        </div>
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (isSubmitting) return;
+    setFormAlert(null);
+    const existing = recordsMap[form.id] || [];
+    const hidden: Record<string, boolean> = {};
+    form.fields.forEach((f) => { if (isFieldHidden(f)) hidden[f.id] = true; });
 
-        {onCancel && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCancel}
-            icon={<ArrowLeft className="w-3.5 h-3.5" />}
-          >
-            Back
-          </Button>
-        )}
-      </div>
+    const validationErrors = validateFormData(form, fullValues, existing, record?.id, { hiddenFields: hidden, context: formulaCtx });
+    const wfValidate = executeWorkflows(workflows, "onValidate", undefined, fullValues, form, wfCtx);
+    const wfSubmit = executeWorkflows(workflows, "onSubmit", undefined, wfValidate.updatedValues, form, wfCtx);
+    const combined: ValidationErrors = { ...validationErrors, ...wfValidate.validationErrors, ...wfSubmit.validationErrors };
+    const finalData = stripComputed({ ...wfSubmit.updatedValues });
+    setFormData(finalData);
 
-      {/* Alert banner if workflow message */}
-      {formAlert && (
-        <div
-          className={`p-4 rounded-xl border flex items-start justify-between gap-3 text-xs shadow-3xs animate-in fade-in ${
-            formAlert.type === "error"
-              ? "bg-rose-50 border-rose-200 text-rose-900"
-              : formAlert.type === "warning"
-              ? "bg-amber-50 border-amber-200 text-amber-900"
-              : "bg-blue-50 border-blue-200 text-blue-900"
-          }`}
-        >
-          <div className="flex items-start gap-3">
-            <AlertCircle
-              className={`w-5 h-5 shrink-0 mt-0.5 ${
-                formAlert.type === "error"
-                  ? "text-rose-600"
-                  : formAlert.type === "warning"
-                  ? "text-amber-600"
-                  : "text-blue-600"
-              }`}
+    const fieldIssues = Object.entries(combined).map(([key, err]) => {
+      const f = form.fields.find((x) => x.id === key || x.linkName === key);
+      return { fieldId: f?.id || key, label: f?.label || key, error: err };
+    });
+    const popupAlert = wfSubmit.popupAlert || wfValidate.popupAlert;
+    const hardBlock = fieldIssues.length > 0 || wfValidate.shouldBlockSubmit || wfSubmit.shouldBlockSubmit || popupAlert?.type === "error";
+
+    if (hardBlock) {
+      setErrors(combined);
+      const msg = pickMessage({ ...wfSubmit, messages: [...wfValidate.messages, ...wfSubmit.messages] });
+      setFormAlert(msg && msg.type !== "info" ? msg : null);
+      setPopup({
+        type: "error",
+        blockSubmit: true,
+        title: popupAlert?.title || (fieldIssues.length ? "Please fix the highlighted fields" : "Submission blocked"),
+        message: popupAlert?.message || (fieldIssues.length ? `${fieldIssues.length} field${fieldIssues.length > 1 ? "s need" : " needs"} attention before this record can be saved.` : msg?.text || "A workflow rule prevented this record from being saved."),
+        fields: fieldIssues,
+      });
+      focusField(fieldIssues[0]?.fieldId);
+      return;
+    }
+
+    setErrors({});
+    if (popupAlert) {
+      // warning / info → acknowledge and continue; confirm → continue or cancel
+      setPopup({ ...popupAlert, onContinue: () => { setPopup(null); persist(finalData, [wfValidate, wfSubmit]); }, onCancel: () => setPopup(null) });
+      return;
+    }
+    await persist(finalData, [wfValidate, wfSubmit]);
+  };
+
+  const stripComputed = (data: Record<string, any>) => {
+    const out = { ...data };
+    for (const f of form.fields) if (f.type === "formula" || f.type === "rollup" || f.type === "section") delete out[f.id];
+    for (const k of Object.keys(out)) if (k.endsWith("__rec")) delete out[k];
+    // keep only known fields
+    const known = new Set(form.fields.map((f) => f.id));
+    for (const k of Object.keys(out)) if (!known.has(k)) delete out[k];
+    return out;
+  };
+
+  const focusField = (fieldId?: string) => {
+    if (!fieldId) return;
+    setTimeout(() => {
+      const el = document.getElementById(`field-container-${fieldId}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
+    }, 120);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); handleSubmit(); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, fullValues]);
+
+  // ── layout: sections ──────────────────────────────────────────────────────
+  const sections = useMemo(() => {
+    const groups: Array<{ section?: FieldDefinition; fields: FieldDefinition[] }> = [];
+    let current: { section?: FieldDefinition; fields: FieldDefinition[] } = { fields: [] };
+    for (const f of form.fields) {
+      if (f.type === "section") { if (current.fields.length || current.section) groups.push(current); current = { section: f, fields: [] }; }
+      else current.fields.push(f);
+    }
+    groups.push(current);
+    return groups.filter((g) => g.fields.length > 0 || g.section);
+  }, [form.fields]);
+
+  if (!initialized) return null;
+  if (!isEditMode && !formPerm.create) return <div className="max-w-xl mx-auto p-8 bg-white rounded-xl border border-slate-200 text-center text-sm text-slate-600">You don&apos;t have permission to create {form.name} records.</div>;
+
+  const readonlyMode = isEditMode && !formPerm.edit;
+
+  const renderFields = (fields: FieldDefinition[], columns: 1 | 2 | 3) => (
+    <div className="grid grid-cols-1 md:grid-cols-6 gap-x-5 gap-y-4">
+      {fields.map((field) => {
+        if (isFieldHidden(field)) return null;
+        return (
+          <div key={field.id} id={`field-container-${field.id}`} className={spanFor(field, columns)}>
+            <DynamicField
+              field={field}
+              value={formData[field.id]}
+              computedValue={computed[field.id]}
+              onChange={(val, meta) => handleFieldChange(field, val, meta)}
+              error={errors[field.id]}
+              isReadonly={isFieldReadonly(field)}
+              parentValues={fullValues}
             />
-            <div className="space-y-0.5">
-              <span className="font-bold block uppercase tracking-wider text-[10px]">
-                {formAlert.type === "error"
-                  ? "Workflow Error"
-                  : formAlert.type === "warning"
-                  ? "Workflow Warning"
-                  : "Workflow Notice"}
-              </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <QuickCreateContext.Provider value={{ openQuickCreate: (formId, onCreated) => setQuickCreate({ formId, onCreated }) }}>
+      <div className={`${embedded ? "" : "max-w-5xl mx-auto"} space-y-4`}>
+        {!hideHeader && (
+          <div className={`bg-white rounded-xl border border-slate-200 shadow-3xs flex items-center justify-between gap-4 ${embedded ? "p-4" : "p-5"}`}>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className={`${embedded ? "text-base" : "text-lg"} font-bold text-slate-900 tracking-tight`}>{isEditMode ? `Edit ${form.name}` : `New ${form.name}`}</h1>
+                {readonlyMode && <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">Read only</span>}
+                {record && <span className="text-[11px] font-mono text-slate-400">{record.id}</span>}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">{form.description || "Fill in the details below and save."}</p>
+            </div>
+            {onCancel && <Button type="button" variant="outline" size="sm" onClick={onCancel} icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back</Button>}
+          </div>
+        )}
+
+        {formAlert && (
+          <div className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 text-xs shadow-3xs animate-in fade-in ${formAlert.type === "error" ? "bg-rose-50 border-rose-200 text-rose-900" : formAlert.type === "warning" ? "bg-amber-50 border-amber-200 text-amber-900" : formAlert.type === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-blue-50 border-blue-200 text-blue-900"}`}>
+            <div className="flex items-start gap-2.5">
+              {formAlert.type === "error" ? <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5" /> : formAlert.type === "warning" ? <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" /> : formAlert.type === "success" ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" /> : <Info className="w-4 h-4 text-blue-600 mt-0.5" />}
               <p className="font-medium leading-relaxed">{formAlert.text}</p>
             </div>
+            <button type="button" onClick={() => setFormAlert(null)} className="text-slate-400 hover:text-slate-600 p-0.5 rounded shrink-0"><X className="w-4 h-4" /></button>
           </div>
-          <button
-            type="button"
-            onClick={() => setFormAlert(null)}
-            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors shrink-0"
-            title="Dismiss alert"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+        )}
 
-      {/* Form Card */}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-6 rounded-xl border border-slate-200 shadow-3xs space-y-6"
-      >
-        <div
-          className={`grid gap-4 ${
-            form.columns === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
-          }`}
-        >
-          {form.fields.map((field) => {
-            const isFullWidth = field.type === "subform" || form.columns === 1;
-
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {sections.map((group, gi) => {
+            const sec = group.section;
+            const isCollapsed = sec ? collapsed[sec.id] : false;
+            const cols = (sec?.section?.columns || form.columns || 2) as 1 | 2 | 3;
+            if (sec && isFieldHidden(sec)) return null;
             return (
-              <div
-                key={field.id}
-                id={`field-container-${field.id}`}
-                className={isFullWidth && form.columns === 2 ? "md:col-span-2" : ""}
-              >
-                <DynamicField
-                  field={field}
-                  value={formData[field.id]}
-                  onChange={(val) => handleFieldChange(field.id, val)}
-                  error={errors[field.id]}
-                  isHidden={hiddenFields[field.id]}
-                  isReadonly={readonlyFields[field.id]}
-                  workflows={workflows}
-                />
+              <div key={sec?.id || `g${gi}`} className="bg-white rounded-xl border border-slate-200 shadow-3xs">
+                {sec && (
+                  <button type="button" onClick={() => sec.section?.collapsible && setCollapsed((c) => ({ ...c, [sec.id]: !c[sec.id] }))} className={`w-full flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-slate-50/70 rounded-t-xl text-left ${sec.section?.collapsible ? "hover:bg-slate-100/80 cursor-pointer" : "cursor-default"}`}>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">{sec.label}{sec.tooltip && <HelpCircle className="w-3.5 h-3.5 text-slate-400" />}</div>
+                      {(sec.section?.description || sec.description) && <div className="text-[11px] text-slate-500 mt-0.5">{sec.section?.description || sec.description}</div>}
+                    </div>
+                    {sec.section?.collapsible && <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />}
+                  </button>
+                )}
+                {!isCollapsed && <div className={embedded ? "p-4" : "p-5"}>{renderFields(group.fields, cols)}</div>}
               </div>
             );
           })}
-        </div>
 
-        {/* Submit Actions */}
-        <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-          {onCancel && (
-            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
-              Cancel
-            </Button>
+          {record && !embedded && (
+            <div className="text-[11px] text-slate-400 flex items-center gap-4 px-1">
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Created {new Date(record.createdAt).toLocaleString()} {record.createdByName || record.createdBy ? `by ${record.createdByName || record.createdBy}` : ""}</span>
+              {record.updatedAt !== record.createdAt && <span>Updated {new Date(record.updatedAt).toLocaleString()} {record.updatedBy ? `by ${record.updatedBy}` : ""}</span>}
+            </div>
           )}
 
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={isSubmitting}
-            icon={<Save className="w-4 h-4" />}
-          >
-            {isSubmitting ? "Saving..." : isEditMode ? "Update Record" : "Save Record"}
-          </Button>
-        </div>
-      </form>
-
-      {/* Workflow Popup Dialog */}
-      {popupModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 space-y-5">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 shadow-xs ring-4 ring-rose-50">
-                <AlertCircle className="w-6 h-6" />
-              </div>
-              <div className="space-y-1 min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-rose-100 text-rose-700">
-                    Validation Blocked
-                  </span>
-                  <span className="text-[11px] text-rose-600 font-semibold">
-                    Data Not Submitted
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-slate-900 leading-snug">
-                  {popupModal.title || "Form Validation Alert"}
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">
-                  {popupModal.message}
-                </p>
-              </div>
-            </div>
-
-            {/* Field-Level Issues List */}
-            {popupModal.fields && popupModal.fields.length > 0 && (
-              <div className="rounded-xl border border-rose-200/80 bg-rose-50/50 p-4 space-y-3">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-rose-800 flex items-center justify-between">
-                  <span>Empty / Invalid Fields ({popupModal.fields.length})</span>
-                  <span className="text-[10px] font-medium text-rose-600">Action Required</span>
-                </div>
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {popupModal.fields.map((f, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white p-3 rounded-lg border border-rose-200/90 shadow-3xs flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
-                          <span className="font-bold text-slate-900 truncate">
-                            {f.label}
-                          </span>
-                          {f.linkName && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              ({f.linkName})
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-rose-600 font-medium mt-1 pl-3.5">
-                          {f.error || "This field cannot be empty. Please enter or select a valid value."}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const targetId = f.fieldId;
-                          setPopupModal(null);
-                          setTimeout(() => {
-                            const el = document.getElementById(`field-container-${targetId}`);
-                            if (el) {
-                              el.scrollIntoView({ behavior: "smooth", block: "center" });
-                              const inputEl = el.querySelector<HTMLElement>("input, select, textarea, button");
-                              if (inputEl) inputEl.focus();
-                            }
-                          }, 100);
-                        }}
-                        className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:underline shrink-0 pt-0.5"
-                      >
-                        Fix Now &rarr;
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200/70 flex items-center gap-2.5 text-xs text-amber-800">
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Submission was aborted. No changes have been written to the database.</span>
-            </div>
-
-            <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-100">
-              <Button
-                variant="primary"
-                onClick={() => {
-                  const targetId = popupModal.fields?.[0]?.fieldId;
-                  setPopupModal(null);
-                  if (targetId) {
-                    setTimeout(() => {
-                      const el = document.getElementById(`field-container-${targetId}`);
-                      if (el) {
-                        el.scrollIntoView({ behavior: "smooth", block: "center" });
-                        const inputEl = el.querySelector<HTMLElement>("input, select, textarea, button");
-                        if (inputEl) inputEl.focus();
-                      }
-                    }, 100);
-                  }
-                }}
-              >
-                Understood, Fix Fields
-              </Button>
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3 shadow-3xs">
+            <span className="text-[11px] text-slate-400 hidden sm:block">Ctrl + S to save</span>
+            <div className="flex items-center gap-2 ml-auto">
+              {onCancel && <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>Cancel</Button>}
+              {!readonlyMode && !isEditMode && !embedded && (
+                <Button type="button" variant="secondary" disabled={isSubmitting} onClick={() => { saveAndNewRef.current = true; handleSubmit(); }}>Save & New</Button>
+              )}
+              {!readonlyMode && (
+                <Button type="submit" variant="primary" loading={isSubmitting} icon={<Save className="w-4 h-4" />}>{isEditMode ? "Update Record" : "Save Record"}</Button>
+              )}
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        </form>
+
+        {/* Workflow / validation popup */}
+        {popup && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 space-y-4">
+              <div className="flex items-start gap-4">
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ring-4 ${popup.type === "error" ? "bg-rose-100 text-rose-600 ring-rose-50" : popup.type === "warning" ? "bg-amber-100 text-amber-600 ring-amber-50" : popup.type === "confirm" ? "bg-blue-100 text-blue-600 ring-blue-50" : "bg-blue-100 text-blue-600 ring-blue-50"}`}>
+                  {popup.type === "error" ? <AlertCircle className="w-6 h-6" /> : popup.type === "warning" ? <AlertTriangle className="w-6 h-6" /> : popup.type === "confirm" ? <HelpCircle className="w-6 h-6" /> : <Info className="w-6 h-6" />}
+                </div>
+                <div className="space-y-1 min-w-0 flex-1">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${popup.type === "error" ? "bg-rose-100 text-rose-700" : popup.type === "warning" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                    {popup.type === "error" ? "Blocked" : popup.type === "warning" ? "Warning" : popup.type === "confirm" ? "Confirm" : "Notice"}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900 leading-snug">{popup.title || (popup.type === "confirm" ? "Please confirm" : "Workflow message")}</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{popup.message}</p>
+                </div>
+              </div>
+              {popup.fields && popup.fields.length > 0 && (
+                <div className="rounded-xl border border-rose-200/80 bg-rose-50/50 p-3 space-y-1.5 max-h-56 overflow-y-auto">
+                  {popup.fields.map((f) => (
+                    <button type="button" key={f.fieldId} onClick={() => { setPopup(null); focusField(f.fieldId); }} className="w-full text-left bg-white p-2.5 rounded-lg border border-rose-200/90 flex items-center justify-between gap-3 text-xs hover:border-rose-400">
+                      <span><span className="font-semibold text-slate-900">{f.label}</span><span className="block text-[11px] text-rose-600">{f.error}</span></span>
+                      <span className="text-[11px] font-semibold text-blue-600 shrink-0">Fix →</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                {popup.type === "confirm" && <Button variant="outline" onClick={() => popup.onCancel?.() || setPopup(null)}>Cancel</Button>}
+                {popup.type === "error" ? (
+                  <Button variant="danger" onClick={() => { const first = popup.fields?.[0]?.fieldId; setPopup(null); focusField(first); }}>Understood</Button>
+                ) : popup.onContinue ? (
+                  <Button variant={popup.type === "warning" ? "primary" : "primary"} onClick={popup.onContinue}>{popup.type === "confirm" ? "Continue anyway" : "OK, continue"}</Button>
+                ) : (
+                  <Button onClick={() => setPopup(null)}>OK</Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quick-create for lookups */}
+        {quickCreate && app && (() => {
+          const target = app.forms.find((f) => f.id === quickCreate.formId);
+          if (!target) return null;
+          return (
+            <Modal isOpen onClose={() => setQuickCreate(null)} title={`New ${target.name}`} description="Create a record and it will be selected automatically." maxWidth="3xl" bodyClassName="bg-slate-50">
+              <DynamicForm form={target} embedded onCancel={() => setQuickCreate(null)} onSuccess={(rec) => { if (rec) quickCreate.onCreated(rec); setQuickCreate(null); }} />
+            </Modal>
+          );
+        })()}
+      </div>
+    </QuickCreateContext.Provider>
   );
 };
+
+function pickMessage(res: WorkflowResult) {
+  if (!res.messages.length) return null;
+  const err = res.messages.find((m) => m.type === "error");
+  const warn = res.messages.find((m) => m.type === "warning");
+  const succ = res.messages.find((m) => m.type === "success");
+  return err || warn || succ || res.messages[res.messages.length - 1];
+}

@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function signedIn() { return request.auth != null && request.auth.token.email != null; }
+    function email() { return signedIn() ? request.auth.token.email.lower() : ""; }
+    // Platform owner(s): keep in sync with src/lib/auth/config.ts
+    function isPlatformOwner() { return signedIn() && email() in ['gowthamraje1221@gmail.com']; }
+    function isAppOwner(app) { return isPlatformOwner() || (signedIn() && app.ownerEmail != null && app.ownerEmail.lower() == email()); }
+    function isMember(app) { return signedIn() && app.memberEmails != null && email() in app.memberEmails; }
+    function isPublic(app) { return app.sharing != null && app.sharing.mode == 'public_view'; }
+    function appDoc(appId) { return get(/databases/$(database)/documents/apps/$(appId)).data; }
+
+    // ── apps ─────────────────────────────────────────────────────────────────
+    match /apps/{appId} {
+      allow read: if isAppOwner(resource.data) || isMember(resource.data) || isPublic(resource.data);
+      allow create: if isPlatformOwner();
+      allow update, delete: if isAppOwner(resource.data);
+
+      match /records/{recordId} {
+        allow read: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
+        allow create, update, delete: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+      }
+      match /versions/{versionId} {
+        allow read: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
+        allow write: if isAppOwner(appDoc(appId));
+      }
+      match /audit/{entryId} {
+        allow read: if isAppOwner(appDoc(appId));
+        allow create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+      }
+      match /workflowLogs/{entryId} {
+        allow read: if isAppOwner(appDoc(appId));
+        allow create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+      }
+      match /comments/{commentId} {
+        allow read, create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+        allow delete: if isAppOwner(appDoc(appId));
+      }
+    }
+
+    // ── platform collections ─────────────────────────────────────────────────
+    match /users/{userEmail} {
+      allow read, write: if isPlatformOwner() || (signedIn() && userEmail == email());
+    }
+    match /templates/{templateId} {
+      allow read: if signedIn();
+      allow write: if isPlatformOwner();
+    }
+    match /notifications/{id} {
+      allow read, update: if signedIn() && resource.data.toEmail == email();
+      allow create: if signedIn();
+    }
+    // Firebase "Trigger Email" extension reads this collection
+    match /mail/{id} {
+      allow create: if signedIn();
+    }
+    match /platform/{doc} {
+      allow read, write: if isPlatformOwner();
+    }
+  }
+}

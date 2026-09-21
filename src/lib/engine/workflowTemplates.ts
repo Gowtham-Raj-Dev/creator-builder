@@ -1,113 +1,51 @@
-import { WorkflowDefinition, WorkflowTriggerType } from "@/types/schema";
+import { WorkflowDefinition } from "@/types/schema";
 
 export interface WorkflowTemplate {
   id: string;
   name: string;
-  category: "Validation" | "Calculation" | "UI Visibility" | "Defaults";
   description: string;
-  explanation: string;
-  triggerType: WorkflowTriggerType;
-  mode: "code" | "visual";
-  codeScript: string;
-  sampleVisualAction?: string;
+  category: "Calculation" | "Validation" | "Stock" | "Notification" | "Automation";
+  mode: "visual" | "code";
+  trigger: WorkflowDefinition["trigger"];
+  codeScript?: string;
+  actionsHint?: string;
 }
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
-    id: "tpl_submit_empty_popup",
-    name: "On Submit Empty Field Validation with Popup Alert",
-    category: "Validation",
-    description: "Blocks submission and displays an alert popup modal if a required field is blank.",
-    explanation:
-      "Triggers on the 'onSubmit' event. When the user clicks Save/Submit, it verifies if the target field is empty. If empty, it displays an alert popup and halts submission.",
-    triggerType: "onSubmit",
-    mode: "code",
-    codeScript: `// On Submit Validation with Modal Alert
-if (!customer_name || customer_name == "") {
-  showPopup("Validation Error: Customer Name cannot be empty. Please fill in all required fields.");
-  blockSubmit();
-}`,
+    id: "tpl_total", name: "Calculate line total", description: "amount = quantity × rate on every change", category: "Calculation", mode: "code", trigger: { type: "onUserInput" },
+    codeScript: `// Runs whenever any field changes\ninput.amount = (Number(input.quantity) || 0) * (Number(input.rate) || 0);`,
   },
   {
-    id: "tpl_calculate_amount",
-    name: "Line Item Calculation (Amount = Quantity * Rate)",
-    category: "Calculation",
-    description: "Calculates total amount whenever Quantity or Rate is changed by the user.",
-    explanation:
-      "Triggers on 'onUserInput'. It dynamically evaluates quantity multiplied by rate and assigns the computed result directly to the amount field in real time.",
-    triggerType: "onUserInput",
-    mode: "code",
-    codeScript: `// Real-time Line Item Calculation
-amount = quantity * rate;`,
+    id: "tpl_subtotal", name: "Subform totals → parent", description: "Sum subform amounts, apply tax, set grand total", category: "Calculation", mode: "code", trigger: { type: "onUserInput" },
+    codeScript: `const subtotal = sum(input.items, "amount");\ninput.subtotal = round(subtotal, 2);\ninput.total = round(subtotal * (1 + (Number(input.tax) || 0) / 100), 2);`,
   },
   {
-    id: "tpl_discount_limit",
-    name: "High Discount Manager Approval Alert",
-    category: "Validation",
-    description: "Displays a warning popup when discount percentage exceeds the 30% limit.",
-    explanation:
-      "Triggers on 'onUserInput' when editing the Discount field. If the user enters a value greater than 30, a warning alert informs them of manager approval rules.",
-    triggerType: "onUserInput",
-    mode: "code",
-    codeScript: `// Conditional Discount Check
-if (discount > 30) {
-  showPopup("Approval Warning: Discounts above 30% require manager authorization.");
-}`,
+    id: "tpl_stock_check", name: "Warn when stock is low", description: "Confirm before saving if usage exceeds available stock", category: "Validation", mode: "code", trigger: { type: "onSubmit" },
+    codeScript: `const item = get("item", input.item);\nif (item && Number(input.quantity) > Number(item.stock || 0)) {\n  confirm(\`Only \${item.stock} available for \${item.name}. Continue anyway?\`);\n}`,
   },
   {
-    id: "tpl_conditional_visibility",
-    name: "Conditional Field Visibility (Show/Hide Field)",
-    category: "UI Visibility",
-    description: "Shows a secondary field only when a specific dropdown option is selected.",
-    explanation:
-      "Triggers on 'onUserInput'. If status equals 'Inactive', the 'reason' field is made visible, otherwise it is hidden automatically.",
-    triggerType: "onUserInput",
-    mode: "code",
-    codeScript: `// Dynamic Field Visibility
-if (status == "Inactive") {
-  showField("inactive_reason");
-} else {
-  hideField("inactive_reason");
-}`,
+    id: "tpl_stock_update", name: "Update stock after save", description: "Decrease Item.stock by the quantity used (per line item)", category: "Stock", mode: "code", trigger: { type: "onSuccess" },
+    codeScript: `// Runs after the record is saved. Data changes are applied to Firestore.\nfor (const row of input.items) {\n  if (row.item && row.quantity) increment("item", row.item, "stock", -Number(row.quantity));\n}`,
   },
   {
-    id: "tpl_tax_grand_total",
-    name: "Calculate Grand Total with Tax Percentage",
-    category: "Calculation",
-    description: "Computes Grand Total from Subtotal and Tax Rate %.",
-    explanation:
-      "Calculates the total monetary value by applying the percentage tax to the subtotal amount: total_amount = subtotal + (subtotal * tax_rate / 100).",
-    triggerType: "onUserInput",
-    mode: "code",
-    codeScript: `// Grand Total Calculation
-total_amount = subtotal + (subtotal * tax_rate / 100);`,
+    id: "tpl_date_validate", name: "End date after start date", description: "Block submit when dates are inverted", category: "Validation", mode: "code", trigger: { type: "onValidate" },
+    codeScript: `if (input.end_date && input.start_date && input.end_date < input.start_date) {\n  setError("end_date", "End date must be after start date");\n}`,
   },
   {
-    id: "tpl_onload_defaults",
-    name: "Pre-fill Default Values on Form Load",
-    category: "Defaults",
-    description: "Initializes fields with default parameters as soon as the form opens.",
-    explanation:
-      "Triggers on 'onLoad'. Sets the initial tax rate, currency, or status before the user begins typing.",
-    triggerType: "onLoad",
-    mode: "code",
-    codeScript: `// Set Initial Defaults On Form Load
-tax_rate = 18;
-status = "Active";`,
+    id: "tpl_email", name: "Email on approval", description: "Send an email when status becomes Approved", category: "Notification", mode: "code", trigger: { type: "onSuccess" },
+    codeScript: `if (input.status === "Approved") {\n  sendEmail({ to: input.requester_email, subject: \`\${form.name} approved\`, body: \`Hi, your request \${record?.id} was approved by \${user.name}.\` });\n}`,
   },
   {
-    id: "tpl_age_check",
-    name: "Age Eligibility Check on Submit",
-    category: "Validation",
-    description: "Verifies minimum age requirement and blocks submission if under 18.",
-    explanation:
-      "Ensures the applicant meets the legal age requirement before allowing the form to be saved.",
-    triggerType: "onSubmit",
-    mode: "code",
-    codeScript: `// Minimum Age Validation on Submit
-if (age < 18) {
-  showPopup("Eligibility Alert: Applicant must be at least 18 years old to register.");
-  blockSubmit();
-}`,
+    id: "tpl_autofill", name: "Auto-fill from lookup", description: "Copy rate & unit from the selected Item", category: "Automation", mode: "code", trigger: { type: "onUserInput", fieldId: "item" },
+    codeScript: `const item = get("item", input.item);\nif (item) {\n  input.rate = item.rate;\n  input.unit = item.unit;\n}`,
+  },
+  {
+    id: "tpl_hide", name: "Show field conditionally", description: "Show cheque number only for cheque payments", category: "Automation", mode: "code", trigger: { type: "onUserInput" },
+    codeScript: `if (input.payment_mode === "Cheque") showField("cheque_number"); else hideField("cheque_number");`,
+  },
+  {
+    id: "tpl_log", name: "Create audit record in another form", description: "Insert a Stock Log row after saving a purchase", category: "Automation", mode: "code", trigger: { type: "onSuccess" },
+    codeScript: `insert("stock_log", { item: input.item, qty: input.quantity, type: "IN", reference: record?.id, by: user.email });`,
   },
 ];

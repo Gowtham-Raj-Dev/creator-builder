@@ -1,9 +1,12 @@
 import React from "react";
+import { Loader2 } from "lucide-react";
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
-  size?: "sm" | "md" | "lg";
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "danger" | "success" | "subtle";
+  size?: "xs" | "sm" | "md" | "lg";
   icon?: React.ReactNode;
+  iconRight?: React.ReactNode;
+  loading?: boolean;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -11,39 +14,53 @@ export const Button: React.FC<ButtonProps> = ({
   variant = "primary",
   size = "md",
   icon,
+  iconRight,
+  loading,
   className = "",
   disabled,
   ...props
 }) => {
-  let base =
-    "inline-flex items-center justify-center font-medium transition-all duration-150 rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 select-none disabled:opacity-50 disabled:cursor-not-allowed";
+  const base =
+    "inline-flex items-center justify-center font-medium transition-all duration-150 rounded-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 select-none disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap";
 
   let sizeStyles = "px-3.5 py-2 text-sm gap-2";
+  if (size === "xs") sizeStyles = "px-2 py-1 text-[11px] gap-1 rounded-md";
   if (size === "sm") sizeStyles = "px-2.5 py-1.5 text-xs gap-1.5";
   if (size === "lg") sizeStyles = "px-5 py-2.5 text-base gap-2.5";
 
-  let variantStyles = "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 shadow-xs";
-  if (variant === "secondary") {
-    variantStyles =
-      "bg-slate-100 text-slate-800 hover:bg-slate-200 focus:ring-slate-400 border border-slate-200";
-  } else if (variant === "outline") {
-    variantStyles =
-      "bg-white text-slate-700 hover:bg-slate-50 focus:ring-slate-300 border border-slate-300 shadow-2xs";
-  } else if (variant === "ghost") {
-    variantStyles =
-      "bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:ring-slate-300";
-  } else if (variant === "danger") {
-    variantStyles =
-      "bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-xs";
-  }
+  const variants: Record<string, string> = {
+    primary: "bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500 shadow-xs shadow-blue-600/20",
+    secondary: "bg-slate-100 text-slate-800 hover:bg-slate-200 focus-visible:ring-slate-400 border border-slate-200",
+    outline: "bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-300 border border-slate-300 shadow-2xs",
+    ghost: "bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-300",
+    subtle: "bg-blue-50 text-blue-700 hover:bg-blue-100 focus-visible:ring-blue-300 border border-blue-100",
+    danger: "bg-rose-600 text-white hover:bg-rose-700 focus-visible:ring-rose-500 shadow-xs",
+    success: "bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500 shadow-xs",
+  };
 
   return (
+    <button className={`${base} ${sizeStyles} ${variants[variant]} ${className}`} disabled={disabled || loading} {...props}>
+      {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : icon && <span className="shrink-0">{icon}</span>}
+      {children}
+      {iconRight && <span className="shrink-0">{iconRight}</span>}
+    </button>
+  );
+};
+
+export const IconButton: React.FC<
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "default" | "danger" | "primary"; size?: "sm" | "md" }
+> = ({ tone = "default", size = "md", className = "", children, ...props }) => {
+  const tones = {
+    default: "text-slate-400 hover:text-slate-700 hover:bg-slate-100",
+    danger: "text-slate-400 hover:text-rose-600 hover:bg-rose-50",
+    primary: "text-slate-400 hover:text-blue-600 hover:bg-blue-50",
+  };
+  return (
     <button
-      className={`${base} ${sizeStyles} ${variantStyles} ${className}`}
-      disabled={disabled}
+      type="button"
+      className={`inline-flex items-center justify-center rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${size === "sm" ? "p-1" : "p-1.5"} ${tones[tone]} ${className}`}
       {...props}
     >
-      {icon && <span className="shrink-0">{icon}</span>}
       {children}
     </button>
   );

@@ -1,0 +1,14 @@
+▲ Next.js 16.3.5 (Turbopack)
+- Local:         http://localhost:3111
+- Network:       http://192.168.2.100:3111
+✓ Ready in 2.6s
+✓ Running next.config.ts took 152ms
+
+○ Compiling / ...
+ GET / 200 in 10.2s (next.js: 9.4s, application-code: 857ms)
+ GET /login 200 in 634ms (next.js: 537ms, application-code: 97ms)
+ GET /builder 200 in 797ms (next.js: 667ms, application-code: 130ms)
+ GET /app 200 in 1419ms (next.js: 1173ms, application-code: 246ms)
+ GET /builder/editor?app=x 200 in 2.4s (next.js: 1986ms, application-code: 405ms)
+ GET /app?app=x 200 in 92ms (next.js: 15ms, application-code: 77ms)
+[?25h
