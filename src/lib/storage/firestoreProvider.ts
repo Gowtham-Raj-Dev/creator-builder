@@ -15,6 +15,7 @@ import {
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
+  AiChat,
   AppDefinition,
   AppVersion,
   AuditLogEntry,
@@ -390,6 +391,24 @@ export class FirestoreDataProvider implements DataProvider {
     if (!isBrowser()) return;
     const id = generateId("cmt");
     await setDoc(doc(getDb(), APPS, entry.appId, "comments", id), sanitizeForFirestore({ ...entry, id, createdAt: nowIso() }));
+  }
+
+  // ── AI assistant chats ───────────────────────────────────────────────────
+
+  async listAiChats(appId: string): Promise<AiChat[]> {
+    if (!isBrowser()) return [];
+    const snap = await getDocs(query(collection(getDb(), APPS, appId, "aiChats"), orderBy("updatedAt", "desc"), fsLimit(300)));
+    return snap.docs.map((d) => d.data() as AiChat);
+  }
+
+  async saveAiChat(chat: AiChat): Promise<void> {
+    if (!isBrowser()) return;
+    await setDoc(doc(getDb(), APPS, chat.appId, "aiChats", chat.id), sanitizeForFirestore(chat));
+  }
+
+  async deleteAiChat(appId: string, chatId: string): Promise<void> {
+    if (!isBrowser()) return;
+    await deleteDoc(doc(getDb(), APPS, appId, "aiChats", chatId));
   }
 
   subscribeComments(appId: string, formId: string, recordId: string, cb: (c: CommentEntry[]) => void): Unsubscribe {

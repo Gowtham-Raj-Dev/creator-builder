@@ -280,14 +280,16 @@ You output ONLY a JSON object (no prose) with this shape:
                { "name": "Purchases by Vendor", "form": "Purchase", "type": "summary", "groupBy": "Vendor" },
                { "name": "Monthly Sales", "form": "Sales Invoice", "type": "chart", "chartType": "column", "groupBy": "Invoice Date", "metric": "sum", "field": "Grand Total" },
                { "name": "Receivables Aging", "form": "Sales Invoice", "type": "aging" }],
-  "workflows": [{ "name": "Reduce stock", "form": "Usage", "trigger": "onSuccess", "script": "increment(\\"item\\", input.item, \\"stock\\", -Number(input.quantity));" }],
+  "workflows": [{ "name": "Reduce stock", "form": "Usage", "trigger": "onSuccess", "script": "increment(\\"item\\", input.item, \\"stock\\", -Number(input.quantity));" },
+                { "name": "Fill GRN from PO", "form": "GRN", "trigger": "onUserInput", "triggerField": "Purchase Order", "script": "const po = get(\\"purchase_order\\", input.purchase_order); if (po) { input.vendor = po.vendor; input.line_items = po.line_items.map(r => ({ item: r.item, ordered_quantity: r.quantity, rate: r.rate })); }" }],
   "roles": [{ "name": "Store Manager", "preset": "full" }, { "name": "Staff", "preset": "view" }],
   "dashboard": { "kpis": [{ "label": "Total purchases", "form": "Purchase", "aggregate": "sum", "field": "Total" }], "charts": [{ "title": "Purchases by month", "form": "Purchase", "chartType": "column", "groupBy": "createdAt", "metric": "sum", "field": "Total" }] }
 }
 Field types: text, textarea, richtext, email, phone, url, number, decimal, currency, percentage, rating, dropdown, radio, checkbox, multiselect, date, datetime, time, lookup, subform, users, formula, rollup, autonumber, file, image, signature, address, geolocation, barcode, color, section.
 Subforms: either inline ("columns": [field objects]) or backed by an existing/child form ("linkForm": "<form name>", "columns": [labels of that form's fields]) — use linkForm when the user asks for the line items as a separate form (so rows are records of that form, linked to the parent automatically). The child form must be defined in "forms" (e.g. "Invoice Item" with Product lookup, Quantity, Rate, Amount formula) or already exist.
 Rules: use "section" fields to group; lookups reference other forms by name; formulas use snake_case link names of labels (e.g. "Vendor Name" → vendor_name) and functions: ${FUNCTION_DOCS.slice(0, 14).map((d) => d.sig).join(", ")}.
-Workflow scripts MUST be plain modern JavaScript (NOT Zoho Deluge): use "for (const row of input.items) { … }", "if (…) { … }", "const x = …", "showError(\"msg\")" to block, "confirm(\"msg\")" to ask, "blockSubmit()" — never "for each", "cancel submit", "info", "alert" statements without parentheses. Subform rows are accessed as input.<subform_link_name> (an array) and columns by link name (row.quantity). API: ${SCRIPT_API_DOCS.slice(0, 16).map((d) => d.sig).join("; ")}. Triggers: onLoad, onUserInput, onValidate, onSubmit, onSuccess.
+Workflow scripts MUST be plain modern JavaScript (NOT Zoho Deluge): use "for (const row of input.items) { … }", "if (…) { … }", "const x = …", "showError(\"msg\")" to block, "confirm(\"msg\")" to ask, "blockSubmit()" — never "for each", "cancel submit", "info", "alert" statements without parentheses. Subform rows are accessed as input.<subform_link_name> (an array) and columns by link name (row.quantity). API: ${SCRIPT_API_DOCS.slice(0, 18).map((d) => d.sig).join("; ")}. Triggers: onLoad (new record), onEdit (existing record), onOpen (both), onUserInput, onValidate, onSubmit, onSuccess, onDelete. For onUserInput ALWAYS set "triggerField" (the field label, or "Subform.Column") so the script runs only when that field changes — never on every keystroke. Lock a form: disableAll() / setReadonly("*").
+Cross-form fill (e.g. GRN from PO, Invoice from Quotation): trigger onUserInput on the lookup field; const po = get("purchase_order", input.purchase_order); if (po) { input.vendor = po.vendor; input.line_items = po.line_items.map(r => ({ item: r.item, ordered_quantity: r.quantity, rate: r.rate })); } — row keys are the TARGET subform's column link names; formula columns recalculate automatically. All host functions are synchronous: never needed, but async/await is tolerated.
 Report types (use "type"): ${REPORT_TYPE_IDS.join(", ")}. Choose per business need:\n${REPORT_TYPES_PROMPT}
 Give every app 4–8 reports beyond the default tables: at least one chart, one summary/pivot, and finance/stock views (aging, ledger) where money or stock is involved; kanban/funnel for pipelines; scheduler/gantt/calendar for bookings, projects, appointments; checklist for tasks; tree for categories/BOM.
 Master forms (Item, Vendor, Customer) first, then transactions. Keep it practical for an Indian SME. 3–8 forms.`;
@@ -439,7 +441,17 @@ export function materialize(raw: any, existing: AppDefinition): GeneratedApp {
   }
 
   // workflows
-  const workflows: WorkflowDefinition[] = (raw.workflows || []).map((w: any) => { const f = findForm(w.form); return f ? { id: generateId("wf"), name: w.name, description: w.description || "", formId: f.id, mode: "code" as const, codeScript: String(w.script || ""), trigger: { type: w.trigger || "onUserInput" }, actions: [], active: true, version: 1, createdAt: now, updatedAt: now } : null; }).filter(Boolean);
+  const TRIGGER_TYPES = new Set(["onLoad", "onEdit", "onOpen", "onUserInput", "onValidate", "onSubmit", "onSuccess", "onDelete"]);
+  const resolveTriggerField = (f: FormDefinition, key: any): string | undefined => {
+    if (!key) return undefined;
+    const [top, col] = String(key).split(".");
+    const tf = findFieldIn(f, top);
+    if (!tf) return undefined;
+    if (!col) return tf.id;
+    const c = tf.subform?.columns.find((x) => x.id === col || x.linkName === col || x.label.toLowerCase() === col.toLowerCase());
+    return c ? `${tf.id}.${c.id}` : tf.id;
+  };
+  const workflows: WorkflowDefinition[] = (raw.workflows || []).map((w: any) => { const f = findForm(w.form); if (!f) return null; const type = TRIGGER_TYPES.has(w.trigger) ? w.trigger : "onUserInput"; return { id: generateId("wf"), name: w.name, description: w.description || "", formId: f.id, mode: "code" as const, codeScript: String(w.script || ""), trigger: { type, fieldId: type === "onUserInput" ? resolveTriggerField(f, w.triggerField || w.field) : undefined }, actions: [], active: true, version: 1, createdAt: now, updatedAt: now }; }).filter(Boolean);
 
   return { forms, reports, workflows, roles: raw.roles || [], dashboard: raw.dashboard, raw, updatedForms };
 }
@@ -464,6 +476,7 @@ export async function fixScriptWithAi(script: string, error: string, form: FormD
     "Host API:",
     SCRIPT_API_DOCS.map((d) => `${d.sig} — ${d.desc}`).join("\n"),
     'Rules: read/write fields via input.<link_name>; subform rows via for (const row of input.<subform>) with row.<column>; get("form_link", id) returns a record whose fields are by link name; to block saving call showError("…") or blockSubmit("…"); to ask the user call confirm("…").',
+    'Cross-form fill (e.g. GRN from PO, Invoice from Quotation): trigger onUserInput on the lookup field; const po = get("purchase_order", input.purchase_order); if (po) { input.vendor = po.vendor; input.line_items = po.line_items.map(r => ({ item: r.item, ordered_quantity: r.quantity, rate: r.rate })); } — row keys are the TARGET subform\'s column link names; formula columns recalculate automatically. All host functions are synchronous: never needed, but async/await is tolerated.',
     `Reply ONLY with the corrected script inside a ${FENCE}js fence, no explanation.`,
   ].join("\n");
   const user = `Form "${form.name}" fields:\n${fields}\n\nOther forms (link name: fields):\n${others}\n\nParser error: ${error}\n\nScript to fix:\n${FENCE}\n${script}\n${FENCE}`;

@@ -530,8 +530,9 @@ export interface PageDefinition {
 // ── Workflows ────────────────────────────────────────────────────────────────
 
 export type WorkflowTriggerType =
-  | "onLoad"
-  | "onEdit"
+  | "onLoad" // blank form opens (new record only)
+  | "onEdit" // existing record opens (edit only)
+  | "onOpen" // either: new + edit
   | "onUserInput"
   | "onValidate"
   | "onSubmit"
@@ -885,6 +886,31 @@ export interface CommentEntry {
   createdAt: string;
 }
 
+// ── AI assistant chats (one history per tool: generate app, new form, new report …) ─────────────
+export type AiChatKind = "generate" | "newform" | "newreport" | "newworkflow" | "newdashboard" | "formula" | "query" | "sample" | "chat";
+
+export interface AiChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  /** assistant turns that produced a proposal: what happened to it */
+  status?: "proposed" | "applied" | "discarded" | "error";
+  /** builder URL of what was created (form, report, workflow, page) */
+  link?: string;
+}
+
+export interface AiChat {
+  id: string;
+  appId: string;
+  kind: AiChatKind;
+  title: string;
+  messages: AiChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
 export interface NotificationEntry {
   id: string;
   appId: string;
@@ -910,4 +936,4 @@ export interface StorageSchema {
   records: Record<string, RecordDefinition[]>;
 }
 
-export const CURRENT_APP_SCHEMA_VERSION = 6;
+export const CURRENT_APP_SCHEMA_VERSION = 7;

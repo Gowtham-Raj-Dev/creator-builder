@@ -1,4 +1,5 @@
 import {
+  AiChat,
   AppDefinition,
   AppVersion,
   AuditLogEntry,
@@ -49,6 +50,11 @@ export interface DataProvider {
   // Comments
   addComment(entry: Omit<CommentEntry, "id" | "createdAt">): Promise<void>;
   subscribeComments(appId: string, formId: string, recordId: string, cb: (c: CommentEntry[]) => void): Unsubscribe;
+
+  // AI assistant chat history
+  listAiChats(appId: string): Promise<AiChat[]>;
+  saveAiChat(chat: AiChat): Promise<void>;
+  deleteAiChat(appId: string, chatId: string): Promise<void>;
 
   // Users / notifications / templates
   upsertUser(user: PlatformUser): Promise<void>;

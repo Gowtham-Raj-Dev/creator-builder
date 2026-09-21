@@ -192,10 +192,21 @@ Average order: {{sales_invoice.avg(grand_total)}}`, "Live numbers in heading / t
 
   // ── Workflows ──────────────────────────────────────────────────────────────
   { id: "workflows", title: "Workflows", icon: "zap", summary: "Triggers, no-code actions, and when each thing runs.", topics: [
+    { id: "wf-ai", title: "Write with AI", blocks: [
+      p("On the Workflows page click AI (or “Write with AI” inside a workflow) and describe the rule in plain words — e.g. “When Purchase Order is chosen, fill Line Items from that PO and copy the vendor”. The AI sees your real forms, fields, subform columns and lookup targets, picks the trigger, and writes the script."),
+      table(["Check", "What it means"], [
+        ["Syntax", "The script parses in the sandbox."],
+        ["Field & form names", "Every input.<field>, row column, get(\"form\") and row key you assign to a subform exists — typos are listed with a suggestion."],
+        ["Dry run", "The script ran once on your latest record (or sample values) without crashing; changed fields, popups, blocked saves and queued data operations are shown."],
+      ], "Every proposal is verified before you see it"),
+      p("If a check fails, the AI repairs the script automatically (up to two rounds) and the card shows “Verified” or “Needs attention”. Use the Refine box for follow-up changes (“also copy the address”, “skip zero-quantity rows”). “Edit with AI” rewrites an existing script the same way; “Explain” describes what a script does in plain language."),
+      note("Nothing is saved until you click Create / Apply. The dry run never writes data — insert/update/increment are only listed.", "info"),
+    ] },
     { id: "wf-triggers", title: "Triggers", blocks: [
       table(["Trigger", "Runs when", "Can do", "Cannot do"], [
-        ["On load (new)", "Blank form opens", "set defaults, hide/lock fields, messages", "data changes"],
-        ["On load (edit)", "Existing record opens", "same as above; `record` available, `isEdit` = true", "data changes"],
+        ["On load (new)", "Blank form opens (new record only)", "set defaults, hide/lock fields, messages", "data changes"],
+        ["On load (edit)", "Existing record opens (edit only)", "same as above; `record` available, `isEdit` = true", "data changes"],
+        ["On load (new + edit)", "Whenever the form opens", "rules that must apply every time — e.g. disableAll() when status is Approved", "data changes"],
         ["On field change", "A value changes (whole form or one field / subform column)", "calculate, auto-fill, show/hide, warn", "block save"],
         ["On validate", "User clicks Save, before submit", "setError / showError / blockSubmit", "after-save data ops"],
         ["On submit", "After validation, right before saving", "confirm('Continue anyway?'), final adjustments, block", "—"],
@@ -227,13 +238,13 @@ Average order: {{sales_invoice.avg(grand_total)}}`, "Live numbers in heading / t
       p("Scripts are plain modern JavaScript, run in a sandbox inside the browser (no network, no DOM, step limit against infinite loops). Supported: const/let/var, if/else, for, for…of, for…in, while, do…while, break/continue, functions and arrow functions, template strings, objects/arrays with spread and destructuring, try/catch/throw, ternary, optional chaining."),
       table(["Available globals", "Notes"], [["Math, JSON, Date, Array, Object, String, Number, Boolean, Map, Set, Error", "safe subsets"], ["parseInt, parseFloat, isNaN, isFinite, encodeURIComponent", ""], ["console.log", "output shown in Test run and Logs"]]),
       note("NOT Deluge. 'for each', 'cancel submit', 'info', 'alert' without parentheses, 'input.field = …;' inside 'if' without braces are syntax errors. Click 'Fix with AI' to convert.", "warn"),
-      note("No await / fetch(url) to the internet. Use callWebhook(url, body) to send data out after save; reading a response back needs a Cloud Function.", "warn"),
+      note("Everything is synchronous: get(), fetch() return data immediately, so await is never needed (async/await is accepted and simply ignored). fetch(url) to the internet is not available — use callWebhook(url, body) to send data out after save; reading a response back needs a Cloud Function.", "warn"),
     ] },
     { id: "script-api", title: "Host API (every function)", blocks: [
       table(["Group", "Name", "Signature", "What it does"], SCRIPT_API_DOCS.map((d) => [d.group, d.name, d.sig, d.desc])),
       table(["Function", "Returns", "When does it act?"], [
         ["input.<link>", "current value; assignment changes the form live", "immediately (on load / field change / validate / submit)"],
-        ["input.<subform>", "array of row objects; edit row.qty etc.", "immediately"],
+        ["input.<subform>", "array of row objects; edit row.qty, push({…}), splice, or assign a whole new array — keys by column link name, formula columns recalculated", "immediately"],
         ["fetch(form, filter)", "array of records (fields by link name, plus .id)", "reads the latest data in the browser"],
         ["get(form, id)", "one record or null", "reads"],
         ["insert / update / increment / remove", "queued; insert returns a temp id", "executed after the record is saved successfully (After save / On submit)"],
@@ -246,6 +257,18 @@ Average order: {{sales_invoice.avg(grand_total)}}`, "Live numbers in heading / t
       ], "Semantics"),
     ] },
     { id: "script-recipes", title: "Recipes (copy & adapt)", blocks: [
+      code(`// Trigger: On field change · field: Purchase Order  (GRN form)
+const po = get("purchase_order", input.purchase_order);
+if (!po) { input.line_items = []; return; }
+input.vendor = po.vendor;
+// keys = the GRN subform's column link names; values from the PO rows
+input.line_items = po.line_items.map((r) => ({
+  item: r.item,
+  ordered_quantity: r.quantity,
+  received_quantity: r.quantity,
+  rate: r.rate,
+}));
+// Amount (formula column) is recalculated automatically`, "0. Fill line items from another record (GRN ← PO, Invoice ← Quotation)"),
       code(`// Trigger: On field change · field: Items › Product
 for (const row of input.items) {
   if (!row.product) continue;
@@ -286,9 +309,9 @@ else { hideField("cheque_no"); hideField("bank_name"); input.cheque_no = ""; }`,
       code(`// Trigger: On validate
 if (input.end_date && input.start_date && input.end_date < input.start_date) setError("end_date", "End date must be after start date");
 if (dateDiff(input.invoice_date, today(), "days") < 0) setError("invoice_date", "Invoice date cannot be in the future");`, "8. Date validations"),
-      code(`// Trigger: On load (edit)
+      code(`// Trigger: On load (new + edit)
 if (isEdit && input.status === "Approved") {
-  ["customer", "items", "grand_total", "discount"].forEach((f) => setReadonly(f));
+  disableAll(["notes"]);            // every field read-only except Notes  (setReadonly("*") also works)
   showMessage("Approved records are locked. Only Notes can be edited.", "info");
 }`, "9. Lock a record once approved"),
       code(`// Trigger: On field change · field: Status

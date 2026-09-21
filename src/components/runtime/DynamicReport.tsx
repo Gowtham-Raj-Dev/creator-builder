@@ -15,14 +15,16 @@ import { TableView, GridView, KanbanView, CalendarView, SummaryView, PivotView, 
 import { ListView, TreeView, ChecklistView, FunnelView, SchedulerView, GanttView, ChartView, RankingView, AgingView } from "./report/advancedViews";
 import { RecordDrawer } from "./report/RecordDrawer";
 import { ImportModal } from "./report/ImportModal";
+import { BulkEditPanel } from "./report/BulkEditPanel";
 import { LedgerReport } from "./report/LedgerReport";
 import { toCsv, downloadText, downloadExcel } from "@/lib/engine/reportEngine";
 import { REPORT_TYPES, REPORT_TYPE_META, AUTO_CONFIG_VIEWS } from "@/lib/engine/reportTypes";
 import { Icon } from "@/components/ui/IconPicker";
 import { getLiveAppUrl } from "@/lib/utils/routes";
+import { useToast } from "@/context/ToastContext";
 import {
   Search, Plus, Printer, SlidersHorizontal, Eye, EyeOff, ChevronDown, Filter, X, Download, Upload, Trash2,
-  ChevronLeft, ChevronRight, Bookmark, User, RotateCcw, MoreHorizontal, LayoutGrid,
+  ChevronLeft, ChevronRight, Bookmark, User, RotateCcw, MoreHorizontal, LayoutGrid, Edit,
 } from "lucide-react";
 
 interface DynamicReportProps {
@@ -54,6 +56,7 @@ export const DynamicReport: React.FC<DynamicReportProps> = ({ report, form, onAd
 };
 
 const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, form, onAddRecord, onEditRecord, embedded, initialView, recordFilter, filterNote, ctx }) => {
+  const { showToast } = useToast();
   const { router, app, trashMap, deleteRecord, deleteRecords, restoreRecord, purgeRecord, duplicateRecord, updateRecord, updateReportColumns, updateReportSettings, permissions } = ctx;
   const data = useReportData(report, form, { recordFilter });
   const rawPerm = permissions.form(form.id);
@@ -76,6 +79,7 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
   const [drawerRecord, setDrawerRecord] = useState<RecordDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RecordDefinition | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [draftGroups, setDraftGroups] = useState(data.filterGroups);
   const [saveFilterName, setSaveFilterName] = useState("");
@@ -104,13 +108,17 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
       onDelete: perm.delete ? (rec: RecordDefinition) => setDeleteTarget(rec) : undefined,
       onPrint: perm.print ? (rec: RecordDefinition) => setPrint({ record: rec, open: true }) : undefined,
       onDuplicate: perm.create ? async (rec: RecordDefinition) => { const r = await duplicateRecord(form.id, rec.id); if (r) setDrawerRecord(r); } : undefined,
+      onCopyLink: app ? async (rec: RecordDefinition) => {
+        const url = `${window.location.origin}${getLiveAppUrl(app.linkName, { form: form.linkName, recordId: rec.id })}`;
+        try { await navigator.clipboard.writeText(url); showToast("Record link copied", "success"); } catch { showToast(url, "info"); }
+      } : undefined,
       onLookupClick: (fieldId: string, targetId: string) => {
         const f = form.fields.find((x) => x.id === fieldId);
         const tf = f?.lookup && app?.forms.find((x: FormDefinition) => x.id === f.lookup!.targetFormId);
         if (tf && app) router.push(getLiveAppUrl(app.linkName, { form: tf.linkName, recordId: targetId }));
       },
     }),
-    [perm, onEditRecord, app, router, form, duplicateRecord]
+    [perm, onEditRecord, app, router, form, duplicateRecord, showToast]
   );
 
   const exportRows = () => {
@@ -258,6 +266,7 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
             <span className="font-medium">{selected.size} selected</span>
             <div className="flex items-center gap-2">
               {rperm.export && <Button size="xs" variant="secondary" onClick={() => { const rows = data.records.filter((r) => selected.has(r.id)); downloadText(`${report.linkName}_selected.csv`, toCsv(data.visibleColumns.map((c) => c.label), rows.map((r) => data.visibleColumns.map((c) => data.displayValue(r, c.fieldId))))); }} icon={<Download className="w-3 h-3" />}>Export</Button>}
+              {perm.edit && <Button size="xs" variant="secondary" onClick={() => setBulkEditOpen(true)} icon={<Edit className="w-3 h-3" />}>Edit</Button>}
               {perm.delete && <Button size="xs" variant="danger" onClick={() => setBulkDeleteOpen(true)} icon={<Trash2 className="w-3 h-3" />}>Delete</Button>}
               <IconButton size="sm" className="text-white/70 hover:text-white hover:bg-white/10" onClick={() => setSelected(new Set())}><X className="w-4 h-4" /></IconButton>
             </div>
@@ -341,6 +350,7 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
       <PrintModal isOpen={print.open} onClose={() => setPrint({ open: false })} form={form} record={print.record} records={print.record ? undefined : data.records} reportName={report.name} />
 
       <ConfirmDialog isOpen={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} onConfirm={async () => { if (deleteTarget) { await deleteRecord(form.id, deleteTarget.id); setDrawerRecord(null); } }} title="Delete record" message={app?.settings?.enableTrash !== false ? "This record will be moved to the trash. You can restore it later." : "This record will be permanently deleted."} isDestructive />
+      {bulkEditOpen && <BulkEditPanel form={form} records={data.records.filter((r) => selected.has(r.id))} onClose={() => setBulkEditOpen(false)} onDone={(n) => { if (n) setSelected(new Set()); }} />}
       <ConfirmDialog isOpen={bulkDeleteOpen} onClose={() => setBulkDeleteOpen(false)} onConfirm={async () => { await deleteRecords(form.id, Array.from(selected)); setSelected(new Set()); }} title={`Delete ${selected.size} records`} message="Selected records will be moved to the trash." isDestructive />
     </div>
   );

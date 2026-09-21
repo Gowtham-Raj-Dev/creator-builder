@@ -123,6 +123,17 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({ form, record, onSucces
     [hiddenFields, permissions, form.id, formulaCtx]
   );
 
+  /** Per-column workflow state for a subform: keys "<subformId>.<columnId>" in readonly / hidden maps. */
+  const columnStateFor = useCallback(
+    (subformId: string) => {
+      const prefix = `${subformId}.`;
+      const pick = (bag: Record<string, boolean>) => Object.entries(bag).filter(([k, v]) => v && k.startsWith(prefix)).map(([k]) => k.slice(prefix.length));
+      const readonly = pick(readonlyFields), hidden = pick(hiddenFields);
+      return readonly.length || hidden.length ? { readonly, hidden } : undefined;
+    },
+    [readonlyFields, hiddenFields]
+  );
+
   const isFieldReadonly = useCallback(
     (field: FieldDefinition) => Boolean(readonlyFields[field.id]) || permissions.fieldRule(form.id, field.id) === "readonly" || (isEditMode && !formPerm.edit),
     [readonlyFields, permissions, form.id, isEditMode, formPerm.edit]
@@ -306,6 +317,7 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({ form, record, onSucces
               error={errors[field.id]}
               isReadonly={isFieldReadonly(field)}
               parentValues={fullValues}
+              columnState={field.type === "subform" ? columnStateFor(field.id) : undefined}
             />
           </div>
         );

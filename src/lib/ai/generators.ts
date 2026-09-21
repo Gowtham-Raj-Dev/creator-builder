@@ -1,10 +1,8 @@
-import { AppDefinition, FieldDefinition, FormDefinition, ReportDefinition, ReportFilter, ReportType, WorkflowDefinition, WorkflowTriggerType } from "@/types/schema";
+import { AppDefinition, FieldDefinition, FormDefinition, ReportDefinition, ReportType } from "@/types/schema";
 import { generateId } from "@/lib/utils/idGenerator";
 import { generateUniqueLinkName, toLinkName } from "@/lib/utils/linkName";
-import { checkScriptSyntax } from "@/lib/engine/scriptInterpreter";
-import { SCRIPT_API_DOCS } from "@/lib/engine/workflowEngine";
 import { REPORT_TYPES_PROMPT, REPORT_TYPE_IDS, defaultConfigFor } from "@/lib/engine/reportTypes";
-import { askAi, extractJsonLoose, materialize, fixScriptWithAi } from "./claude";
+import { askAi, extractJsonLoose, materialize } from "./claude";
 import { resolveLinkedSubforms } from "@/lib/engine/subformLink";
 
 const now = () => new Date().toISOString();
@@ -244,58 +242,7 @@ Use "section" fields to group. Lookups MUST reference an existing form by its ex
   return { form: main, report: gen.reports.find((r) => r.sourceFormId === main.id) || gen.reports[0], extraForms, extraReports: gen.reports.filter((r) => r.sourceFormId !== main.id), updatedForms: gen.updatedForms, explanation: raw.explanation || "" };
 }
 
-// ── New workflow (or lookup filter) from prompt ──────────────────────────────
-
-export type WorkflowProposal =
-  | { kind: "workflow"; workflow: WorkflowDefinition; explanation: string }
-  | { kind: "lookup_filter"; targetFormId: string; filters: ReportFilter[]; affected: Array<{ formId: string; fieldId: string; columnId?: string; label: string }>; explanation: string };
-
-export async function generateWorkflowFromPrompt(prompt: string, app: AppDefinition, formId: string): Promise<WorkflowProposal> {
-  const form = app.forms.find((f) => f.id === formId);
-  if (!form) throw new Error("Select a form first.");
-  const text = await askAi(
-    `You automate a low-code app. Decide what the request needs and reply ONLY with JSON, one of:
-A) {"kind":"workflow","name":"…","description":"…","trigger":{"type":"onLoad|onEdit|onUserInput|onValidate|onSubmit|onSuccess|onDelete","fieldId":"<field id or subformFieldId.columnId, only for onUserInput>"},"script":"<JavaScript>","explanation":"…"}
-B) {"kind":"lookup_filter","targetFormId":"<form id whose records must be hidden in lookups>","filters":[{"fieldId":"<field id in that form>","operator":"is_true|is_false|equals|not_equals|is_not_empty","value":"…"}],"explanation":"…"}
-Use B when the request is about which records should be selectable/visible in lookup dropdowns (e.g. "inactive states must not appear when choosing a state"). Use A for calculations, validations, popups, stock updates, notifications, cross-form inserts.
-Scripts MUST be plain JavaScript (NOT Deluge): const/let, if/else, for (const row of input.items) {…}, template strings. Fields: input.<link_name>; subform rows: row.<column_link>; other records: get("form_link", id) / fetch("form_link", {field: value}); block: showError("…") / setError("field", "…"); ask: confirm("…"); after-save data: insert/update/increment/remove.
-Host API: ${SCRIPT_API_DOCS.map((d) => d.sig).join("; ")}.
-Triggers: onUserInput for live reactions while typing (set fieldId when it concerns one field), onValidate/onSubmit before save, onSuccess after save (data changes), onLoad for defaults.`,
-    `Target form: ${form.name} [id ${form.id}, link ${form.linkName}]\n\nAll forms:\n${describeForms(app)}\n\nRequest: ${prompt}`,
-    undefined,
-    4000,
-    { json: true }
-  );
-  const raw = extractJsonLoose(text);
-
-  if (raw.kind === "lookup_filter") {
-    const target = app.forms.find((f) => f.id === raw.targetFormId) || form;
-    const fid = (id: any) => (target.fields.some((f) => f.id === id) ? id : target.fields.find((f) => f.linkName === id || f.label === id)?.id);
-    const filters: ReportFilter[] = (raw.filters || []).map((f: any) => ({ id: generateId("flt"), fieldId: fid(f.fieldId), operator: f.operator || "equals", value: f.value })).filter((f: ReportFilter) => f.fieldId);
-    if (!filters.length) throw new Error("The AI could not map the filter to a field. Try naming the field (e.g. 'Active checkbox').");
-    const affected: Array<{ formId: string; fieldId: string; columnId?: string; label: string }> = [];
-    for (const f of app.forms) for (const fld of f.fields) {
-      if (fld.type === "lookup" && fld.lookup?.targetFormId === target.id) affected.push({ formId: f.id, fieldId: fld.id, label: `${f.name} › ${fld.label}` });
-      if (fld.type === "subform") for (const c of fld.subform?.columns || []) if (c.type === "lookup" && c.lookup?.targetFormId === target.id) affected.push({ formId: f.id, fieldId: fld.id, columnId: c.id, label: `${f.name} › ${fld.label} › ${c.label}` });
-    }
-    return { kind: "lookup_filter", targetFormId: target.id, filters, affected, explanation: raw.explanation || `Only ${target.name} records matching the filter will be selectable.` };
-  }
-
-  let script = String(raw.script || "");
-  const chk = checkScriptSyntax(script);
-  if (!chk.ok) script = await fixScriptWithAi(script, chk.error || "syntax error", form, app);
-  const triggerType = (["onLoad", "onEdit", "onUserInput", "onValidate", "onSubmit", "onSuccess", "onDelete"].includes(raw.trigger?.type) ? raw.trigger.type : "onUserInput") as WorkflowTriggerType;
-  let triggerField: string | undefined = raw.trigger?.fieldId || undefined;
-  if (triggerField) {
-    const [top, col] = String(triggerField).split(".");
-    const tf = form.fields.find((f) => f.id === top || f.linkName === top || f.label === top);
-    if (!tf) triggerField = undefined;
-    else if (col) { const c = tf.subform?.columns.find((x) => x.id === col || x.linkName === col || x.label === col); triggerField = c ? `${tf.id}.${c.id}` : tf.id; }
-    else triggerField = tf.id;
-  }
-  const workflow: WorkflowDefinition = { id: generateId("wf"), name: raw.name || "AI workflow", description: raw.description || raw.explanation || "", formId: form.id, mode: "code", codeScript: script, trigger: { type: triggerType, fieldId: triggerType === "onUserInput" ? triggerField : undefined }, actions: [], active: true, version: 1, createdAt: now(), updatedAt: now() };
-  return { kind: "workflow", workflow, explanation: raw.explanation || "" };
-}
+// ── New workflow from prompt: see src/lib/ai/workflowWriter.ts (writeWorkflowWithAi) ──────────
 
 // ── Cleanup: describe what to remove ─────────────────────────────────────────
 

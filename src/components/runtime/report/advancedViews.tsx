@@ -7,7 +7,8 @@ import { CHART_COLORS, ChartDataPoint, ChartSeries, formatCompact } from "@/lib/
 import { BarChart, LineChart, PieChart, FunnelChart, ChartTable, Legend } from "../charts/Charts";
 import { IconButton } from "@/components/ui/Button";
 import { CommonProps, formatAgg, isNumericField } from "./views";
-import { ChevronRight, ChevronLeft, ChevronDown, Edit, Trash2, CalendarDays, AlertTriangle, Check, Trophy, Table as TableIcon } from "lucide-react";
+import { RowActionsMenu } from "./RowActionsMenu";
+import { ChevronRight, ChevronLeft, ChevronDown, CalendarDays, AlertTriangle, Check, Trophy, Table as TableIcon } from "lucide-react";
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parseDate = (v: any): Date | null => { if (!v) return null; const d = new Date(String(v).length === 10 ? `${v}T00:00:00` : v); return isNaN(d.getTime()) ? null : d; };
@@ -49,10 +50,7 @@ export const ListView: React.FC<CommonProps> = ({ report, form, records, display
             <div className="text-right shrink-0 space-y-0.5">
               {metaIds.map((id) => <div key={id} className={`text-xs ${isNumericField(form, id) ? "font-semibold text-slate-900 tabular-nums" : "text-slate-500"}`}>{displayValue(rec, id) || "—"}</div>)}
             </div>
-            <div className="hidden group-hover:flex items-center" onClick={(e) => e.stopPropagation()}>
-              {perms.edit && actions.onEdit && <IconButton size="sm" tone="primary" onClick={() => actions.onEdit!(rec)}><Edit className="w-3.5 h-3.5" /></IconButton>}
-              {perms.delete && actions.onDelete && <IconButton size="sm" tone="danger" onClick={() => actions.onDelete!(rec)}><Trash2 className="w-3.5 h-3.5" /></IconButton>}
-            </div>
+            <RowActionsMenu rec={rec} actions={actions} perms={perms} className="opacity-60 group-hover:opacity-100" />
             <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
           </div>
         );
@@ -63,7 +61,7 @@ export const ListView: React.FC<CommonProps> = ({ report, form, records, display
 
 // ── Hierarchy / tree ─────────────────────────────────────────────────────────
 
-export const TreeView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions }) => {
+export const TreeView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions, perms }) => {
   const parentField = form.fields.find((f) => f.id === report.tree?.parentFieldId) || form.fields.find((f) => f.type === "lookup" && f.lookup?.targetFormId === form.id);
   const titleId = titleOf(form, report.tree?.titleFieldId);
   const detailIds = report.tree?.detailFieldIds || [];
@@ -91,6 +89,7 @@ export const TreeView: React.FC<CommonProps> = ({ report, form, records, display
           <button type="button" onClick={() => setCollapsed((c) => ({ ...c, [rec.id]: !c[rec.id] }))} className={`w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:bg-slate-200 ${kids.length ? "" : "invisible"}`}>{isCol ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</button>
           <button type="button" onClick={() => actions.onOpen(rec)} className="text-xs font-semibold text-slate-900 hover:text-blue-700 text-left truncate">{titleId ? displayValue(rec, titleId) || rec.id : rec.id}</button>
           {kids.length > 0 && <span className="text-[10px] px-1.5 py-px rounded-full bg-slate-100 text-slate-500 font-semibold">{countDesc(rec.id)}</span>}
+          <RowActionsMenu rec={rec} actions={actions} perms={perms} size="xs" hover />
           <span className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">{detailIds.map((id) => <span key={id}><span className="text-slate-400">{form.fields.find((f) => f.id === id)?.label}:</span> <span className="text-slate-800 font-medium">{displayValue(rec, id) || "—"}</span></span>)}</span>
         </div>
         {!isCol && kids.map((k) => <Node key={k.id} rec={k} depth={depth + 1} />)}
@@ -127,6 +126,7 @@ export const ChecklistView: React.FC<CommonProps & { onToggle?: (rec: RecordDefi
           <button type="button" disabled={!perms.edit || !onToggle} onClick={() => onToggle?.(r, !done)} className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${done ? "bg-emerald-500 border-emerald-500 text-white" : "border-slate-300 hover:border-blue-500"}`}>{done && <Check className="w-3.5 h-3.5" />}</button>
           <button type="button" onClick={() => actions.onOpen(r)} className={`flex-1 text-left text-xs font-medium truncate ${done ? "line-through text-slate-500" : "text-slate-900"}`}>{titleId ? displayValue(r, titleId) || r.id : r.id}</button>
           {assigneeId && <span className="text-[11px] text-slate-500 truncate max-w-[140px]">{displayValue(r, assigneeId)}</span>}
+          <RowActionsMenu rec={r} actions={actions} perms={perms} size="xs" />
           {due && <span className={`text-[11px] flex items-center gap-1 shrink-0 ${!done && days !== null && days < 0 ? "text-rose-600 font-semibold" : days === 0 ? "text-amber-600 font-semibold" : "text-slate-500"}`}>{!done && days !== null && days < 0 ? <AlertTriangle className="w-3 h-3" /> : <CalendarDays className="w-3 h-3" />}{days === 0 ? "Today" : days === 1 ? "Tomorrow" : days !== null && days < 0 ? `${-days}d overdue` : iso(due)}</span>}
         </div>
       ))}
@@ -172,7 +172,7 @@ export const FunnelView: React.FC<CommonProps> = ({ report, form, records, displ
 
 // ── Scheduler (resources × days) ─────────────────────────────────────────────
 
-export const SchedulerView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions }) => {
+export const SchedulerView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions, perms }) => {
   const cfg = report.scheduler;
   const resField = form.fields.find((f) => f.id === cfg?.resourceFieldId) || firstField(form, ["lookup", "dropdown", "users"]);
   const dateField = form.fields.find((f) => f.id === cfg?.dateFieldId) || firstField(form, ["date", "datetime"]);
@@ -205,7 +205,7 @@ export const SchedulerView: React.FC<CommonProps> = ({ report, form, records, di
                 <td className="sticky left-0 bg-white z-[1] px-3 py-2 border-r border-slate-200 font-semibold text-slate-800 whitespace-nowrap">{res}</td>
                 {days.map((d) => { const k = iso(d); const list = cell(res, d); return (
                   <td key={k} className={`align-top p-0.5 border-r border-slate-100 ${k === todayKey ? "bg-blue-50/40" : ""} ${list.length ? "" : "hover:bg-slate-50"}`} style={{ minWidth: mode === "week" ? 120 : 40, height: 44 }}>
-                    <div className="space-y-0.5">{list.slice(0, mode === "week" ? 4 : 2).map((x) => <button key={x.r.id} type="button" onClick={() => actions.onOpen(x.r)} title={titleId ? displayValue(x.r, titleId) : x.r.id} className="block w-full text-left px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200 truncate hover:bg-indigo-200">{mode === "week" ? (titleId ? displayValue(x.r, titleId) || "•" : "•") : "•"}</button>)}{list.length > (mode === "week" ? 4 : 2) && <div className="text-[10px] text-slate-400 pl-1">+{list.length - (mode === "week" ? 4 : 2)}</div>}</div>
+                    <div className="space-y-0.5">{list.slice(0, mode === "week" ? 4 : 2).map((x) => <div key={x.r.id} className="flex items-center gap-0.5 group"><button type="button" onClick={() => actions.onOpen(x.r)} title={titleId ? displayValue(x.r, titleId) : x.r.id} className="block flex-1 min-w-0 text-left px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200 truncate hover:bg-indigo-200">{mode === "week" ? (titleId ? displayValue(x.r, titleId) || "•" : "•") : "•"}</button>{mode === "week" && <RowActionsMenu rec={x.r} actions={actions} perms={perms} size="xs" hover />}</div>)}{list.length > (mode === "week" ? 4 : 2) && <div className="text-[10px] text-slate-400 pl-1">+{list.length - (mode === "week" ? 4 : 2)}</div>}</div>
                   </td>); })}
               </tr>
             ))}
@@ -253,7 +253,7 @@ export const GanttView: React.FC<CommonProps> = ({ report, form, records, displa
                 const late = e! < today && (progress ?? 0) < 100;
                 return (
                   <div key={r.id} className="flex border-b border-slate-100 hover:bg-blue-50/40 group" style={{ height: 34 }}>
-                    <button type="button" onClick={() => actions.onOpen(r)} className="shrink-0 sticky left-0 bg-white group-hover:bg-blue-50/40 px-3 flex items-center gap-2 text-left border-r border-slate-200 z-[1] truncate" style={{ width: LEFT }}><span className="font-medium text-slate-900 truncate">{titleId ? displayValue(r, titleId) || r.id : r.id}</span>{late && <AlertTriangle className="w-3 h-3 text-rose-500 shrink-0" />}</button>
+                    <button type="button" onClick={() => actions.onOpen(r)} className="shrink-0 sticky left-0 bg-white group-hover:bg-blue-50/40 px-3 pr-8 flex items-center gap-2 text-left border-r border-slate-200 z-[1] truncate relative" style={{ width: LEFT }}><span className="font-medium text-slate-900 truncate">{titleId ? displayValue(r, titleId) || r.id : r.id}</span>{late && <AlertTriangle className="w-3 h-3 text-rose-500 shrink-0" />}</button>
                     <div className="relative flex-1">
                       <div className="absolute top-0 bottom-0 w-px bg-rose-400/70" style={{ left: dayDiff(today, min) * pxPerDay }} />
                       <button type="button" onClick={() => actions.onOpen(r)} title={`${iso(s!)} → ${iso(e!)}`} className="absolute top-1.5 h-[22px] rounded-md shadow-3xs overflow-hidden text-left" style={{ left, width, background: `${color}33`, border: `1px solid ${color}` }}>
@@ -373,7 +373,7 @@ export const RankingView: React.FC<CommonProps> = ({ report, form, records, disp
 
 // ── Aging (receivables / payables) ──────────────────────────────────────────
 
-export const AgingView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions }) => {
+export const AgingView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions, perms }) => {
   const cfg = report.aging;
   const dateField = form.fields.find((f) => f.id === cfg?.dateFieldId) || firstField(form, ["date", "datetime"]);
   const amountField = form.fields.find((f) => f.id === cfg?.amountFieldId) || form.fields.find((f) => f.type === "currency");
@@ -413,7 +413,7 @@ export const AgingView: React.FC<CommonProps> = ({ report, form, records, displa
                   <tr key={it.r.id} onClick={() => actions.onOpen(it.r)} className="bg-slate-50/50 hover:bg-blue-50/50 cursor-pointer text-[11px]">
                     <td className="px-4 py-1.5 pl-10 text-slate-700">{displayValue(it.r, form.titleFieldId || form.fields.find((f) => f.type === "autonumber")?.id || dateField.id) || it.r.id} <span className="text-slate-400">· {displayValue(it.r, dateField.id)} · {it.days > 0 ? `${it.days}d overdue` : `due in ${-it.days}d`}</span></td>
                     {labels.map((_, i) => <td key={i} className={`px-3 py-1.5 text-right tabular-nums ${it.b === i ? tone(i) + " font-semibold" : "text-slate-300"}`}>{it.b === i ? fmt(it.amt) : ""}</td>)}
-                    <td className="px-4 py-1.5 text-right tabular-nums">{fmt(it.amt)}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums"><span className="inline-flex items-center gap-1">{fmt(it.amt)}<RowActionsMenu rec={it.r} actions={actions} perms={perms} size="xs" /></span></td>
                   </tr>
                 ))}
               </React.Fragment>

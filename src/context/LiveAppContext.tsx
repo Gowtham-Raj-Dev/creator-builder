@@ -10,7 +10,7 @@ import { computeRollup } from "@/lib/engine/rollupEngine";
 import { isLinkedSubform, planChildSync, CHILD_ID_KEY } from "@/lib/engine/subformLink";
 import { buildFormulaContext, evaluateFormula, coerceFormulaResult } from "@/lib/engine/formulaEngine";
 import { formatCurrency, formatDate } from "@/lib/utils/formatters";
-import { DataOperation, WorkflowResult } from "@/lib/engine/workflowEngine";
+import { DataOperation, WorkflowResult, executeWorkflows } from "@/lib/engine/workflowEngine";
 import { computePermissions, EffectivePermissions } from "@/lib/auth/permissions";
 import { useToast } from "./ToastContext";
 import { useAuth } from "./AuthContext";
@@ -329,12 +329,32 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
     [app, recordsMap, showToast, user, permissions, auditRecord, syncLinkedSubforms]
   );
 
+  const EMPTY_RESULT = (): WorkflowResult => ({ updatedValues: {}, fieldVisibility: {}, fieldReadonly: {}, validationErrors: {}, messages: [], shouldBlockSubmit: false, dataOps: [], emails: [], webhooks: [], notifications: [], logs: [] });
+  /** Runs the form's "On delete" workflows for a record; returns the result, or null when a workflow blocked the delete. */
+  const runDeleteWorkflows = useCallback(
+    (form: FormDefinition, rec: RecordDefinition): WorkflowResult | null => {
+      if (!app?.workflows?.some((w) => w.active && w.formId === form.id && w.trigger.type === "onDelete")) return EMPTY_RESULT();
+      const res = executeWorkflows(app.workflows, "onDelete", undefined, { ...(rec.data || {}) }, form, { app, recordsMap, user: user ? { email: user.email, name: user.name } : null, record: rec, isEdit: true });
+      if (res.shouldBlockSubmit) {
+        showToast(res.popupAlert?.message || res.messages.find((m) => m.type === "error")?.text || "A workflow blocked this delete", "error");
+        return null;
+      }
+      return res;
+    },
+    [app, recordsMap, user, showToast]
+  );
+  // applyWorkflowSideEffects is declared further down; the ref lets the delete paths call it
+  const sideEffectsRef = useRef<((result: WorkflowResult, formId: string, recordId?: string) => Promise<void>) | null>(null);
+
   const deleteRecord = useCallback(
     async (formId: string, recordId: string) => {
       if (!app) return false;
       const form = app.forms.find((f) => f.id === formId);
       if (!form || !permissions.form(formId).delete) { showToast("You don't have permission to delete", "error"); return false; }
       const soft = app.settings?.enableTrash !== false;
+      const target = recordsMap[formId]?.find((r) => r.id === recordId);
+      const wfResult = target ? runDeleteWorkflows(form, target) : null;
+      if (target && !wfResult) return false;
       try {
         if (!soft) await syncLinkedSubforms(form, recordId, {}, { deleteAll: true }); // linked child rows go with the parent
         await storageService.deleteRecord(app.id, formId, recordId, { hard: !soft, by: user?.email });
@@ -342,6 +362,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         const rec = recordsMap[formId]?.find((r) => r.id === recordId);
         if (rec) auditRecord("deleted", form, rec);
         showToast(soft ? "Record moved to trash" : "Record deleted", "info");
+        if (wfResult && sideEffectsRef.current) await sideEffectsRef.current(wfResult, formId, recordId);
         return true;
       } catch (err) {
         console.error("Failed to delete record:", err);
@@ -349,21 +370,38 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         return false;
       }
     },
-    [app, showToast, permissions, user, recordsMap, auditRecord, syncLinkedSubforms]
+    [app, showToast, permissions, user, recordsMap, auditRecord, syncLinkedSubforms, runDeleteWorkflows]
   );
 
   const deleteRecords = useCallback(
     async (formId: string, ids: string[]) => {
       if (!app || !permissions.form(formId).delete) return false;
       const soft = app.settings?.enableTrash !== false;
+      const form = app.forms.find((f) => f.id === formId);
+      // "On delete" workflows run per record; records a workflow blocks are skipped
+      const results: Array<{ id: string; res: WorkflowResult }> = [];
+      if (form) {
+        const allowed: string[] = [];
+        for (const id of ids) {
+          const rec = recordsMap[formId]?.find((r) => r.id === id);
+          const res = rec ? runDeleteWorkflows(form, rec) : EMPTY_RESULT();
+          if (!res) continue;
+          allowed.push(id);
+          if (res.dataOps.length || res.emails.length || res.notifications.length || res.webhooks.length || res.logs.length) results.push({ id, res });
+        }
+        if (allowed.length !== ids.length) showToast(`${ids.length - allowed.length} record(s) skipped — blocked by a workflow`, "warning");
+        ids = allowed;
+        if (!ids.length) return false;
+      }
       try {
         await storageService.deleteRecords(app.id, formId, ids, { hard: !soft, by: user?.email });
+        for (const r of results) if (sideEffectsRef.current) await sideEffectsRef.current(r.res, formId, r.id);
         setRecordsMap((prev) => ({ ...prev, [formId]: soft ? (prev[formId] || []).map((r) => (ids.includes(r.id) ? { ...r, deleted: true, deletedAt: now(), deletedBy: user?.email } : r)) : (prev[formId] || []).filter((r) => !ids.includes(r.id)) }));
         showToast(`${ids.length} record(s) ${soft ? "moved to trash" : "deleted"}`, "info");
         return true;
       } catch { showToast("Bulk delete failed", "error"); return false; }
     },
-    [app, permissions, user, showToast]
+    [app, permissions, user, showToast, recordsMap, runDeleteWorkflows]
   );
 
   const restoreRecord = useCallback(
@@ -482,6 +520,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
     },
     [app, recordsMap, user, showToast]
   );
+  useEffect(() => { sideEffectsRef.current = applyWorkflowSideEffects; }, [applyWorkflowSideEffects]);
 
   const getDisplayForLookup = useCallback(
     (targetFormId: string, displayFieldId: string, recordId: string | string[]) => resolveLookupDisplay(recordId, liveRecordsMap[targetFormId] || recordsMap[targetFormId] || [], displayFieldId),

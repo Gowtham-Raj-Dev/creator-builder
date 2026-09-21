@@ -47,6 +47,10 @@ service cloud.firestore {
         allow read, create: if canBuild(appDoc(appId)) || isMember(appDoc(appId));
         allow delete: if canBuild(appDoc(appId));
       }
+      // AI Assistant chat history (builder tool)
+      match /aiChats/{chatId} {
+        allow read, write: if canBuild(appDoc(appId));
+      }
     }
 
     // ── platform collections ─────────────────────────────────────────────────

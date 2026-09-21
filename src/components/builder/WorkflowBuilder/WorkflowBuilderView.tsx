@@ -16,12 +16,15 @@ import { WORKFLOW_TEMPLATES } from "@/lib/engine/workflowTemplates";
 import { OPERATORS } from "@/components/runtime/report/FilterBuilder";
 import { FormulaEditor } from "../FormBuilder/FormulaEditor";
 import { fixScriptWithAi, setActiveAiApp } from "@/lib/ai/claude";
+import { explainWorkflowWithAi, WriterResult } from "@/lib/ai/workflowWriter";
+import { WorkflowAiModal, applyLookupFilter } from "./WorkflowAiWriter";
 import { useToast } from "@/context/ToastContext";
-import { Zap, Plus, Trash2, Copy, Play, Code2, Blocks, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, BookOpen, History, Sparkles, X } from "lucide-react";
+import { Zap, Plus, Trash2, Copy, Play, Code2, Blocks, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, BookOpen, History, Sparkles, X, Wand2, MessageSquareText } from "lucide-react";
 
 const TRIGGERS: Array<{ id: WorkflowTriggerType; label: string; desc: string; server?: boolean }> = [
-  { id: "onLoad", label: "On load (new)", desc: "When a blank form opens" },
-  { id: "onEdit", label: "On load (edit)", desc: "When an existing record opens" },
+  { id: "onLoad", label: "On load (new)", desc: "Only when a blank form opens" },
+  { id: "onEdit", label: "On load (edit)", desc: "Only when an existing record opens" },
+  { id: "onOpen", label: "On load (new + edit)", desc: "Whenever the form opens — new or existing" },
   { id: "onUserInput", label: "On field change", desc: "When a field or subform column changes" },
   { id: "onValidate", label: "On validate", desc: "Before save — add errors / block" },
   { id: "onSubmit", label: "On submit", desc: "Before save — adjust values, confirm" },
@@ -54,7 +57,7 @@ const ACTIONS: Array<{ id: WorkflowActionType; label: string; group: string }> =
 ];
 
 export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflowId }) => {
-  const { currentApp, createWorkflow, updateWorkflow, deleteWorkflow, duplicateWorkflow } = useAppBuilder();
+  const { currentApp, createWorkflow, updateWorkflow, deleteWorkflow, duplicateWorkflow, updateCurrentApp } = useAppBuilder();
   const [selectedId, setSelectedId] = useState<string | null>(workflowId || null);
   const [filterForm, setFilterForm] = useState("");
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -63,6 +66,8 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
   const [logsOpen, setLogsOpen] = useState(false);
   const [apiOpen, setApiOpen] = useState(true);
   const [fixing, setFixing] = useState(false);
+  const [aiOpen, setAiOpen] = useState<null | { mode: "create" } | { mode: "modify" }>(null);
+  const [explanation, setExplanation] = useState<{ wfId: string; script: string; text: string; busy: boolean } | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => { if (!currentApp) return; if (!selectedId || !currentApp.workflows.some((w) => w.id === selectedId)) setSelectedId(currentApp.workflows[0]?.id || null); }, [currentApp, selectedId]);
@@ -74,6 +79,27 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
 
   if (!currentApp) return null;
   const up = (patch: Partial<WorkflowDefinition>) => wf && updateWorkflow(wf.id, patch);
+  const applyAi = (r: WriterResult) => {
+    if (r.kind === "lookup_filter") { applyLookupFilter(r, updateCurrentApp); showToast(`Lookup filter applied to ${r.affected.length} field(s)`, "success"); setAiOpen(null); return; }
+    if (aiOpen?.mode === "modify" && wf) {
+      updateWorkflow(wf.id, { name: r.workflow.name, description: r.workflow.description, mode: "code", codeScript: r.workflow.codeScript, trigger: r.workflow.trigger });
+      showToast(r.verified ? "Script updated — verified" : "Script updated — review the flagged checks", r.verified ? "success" : "warning");
+    } else {
+      const w = createWorkflow({ ...r.workflow, id: undefined });
+      setSelectedId(w.id);
+      setFilterForm("");
+    }
+    setAiOpen(null);
+  };
+  const explain = async () => {
+    if (!wf || !form) return;
+    const key = { wfId: wf.id, script: wf.codeScript || "" };
+    setExplanation({ ...key, text: "", busy: true });
+    try { const text = await explainWorkflowWithAi(wf, form, currentApp); setExplanation((cur) => (cur && cur.wfId === key.wfId ? { ...key, text, busy: false } : cur)); }
+    catch (e: any) { setExplanation((cur) => (cur && cur.wfId === key.wfId ? null : cur)); showToast(e?.message || "Could not explain the script", "error"); }
+  };
+  // the explanation is only shown for the workflow + script it was written for
+  const explanationFor = explanation && wf && explanation.wfId === wf.id && explanation.script === (wf.codeScript || "") ? explanation : null;
   const upAction = (id: string, patch: Partial<WorkflowAction>) => wf && up({ actions: wf.actions.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
   const list = currentApp.workflows.filter((w) => !filterForm || w.formId === filterForm);
   const fieldOptions = form ? form.fields.filter((f) => f.type !== "section") : [];
@@ -83,7 +109,12 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
     <div className="flex-1 flex h-full overflow-hidden min-h-0">
       <div className="w-64 border-r border-slate-200 bg-white flex flex-col shrink-0 min-h-0">
         <div className="p-3 border-b border-slate-100 space-y-2">
-          <div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Workflows ({currentApp.workflows.length})</span><div className="flex gap-1"><Button size="xs" variant="outline" onClick={() => setTemplatesOpen(true)} icon={<Sparkles className="w-3 h-3 text-amber-500" />}>Templates</Button><Button size="xs" onClick={() => { const w = createWorkflow({ name: "New Workflow", formId: filterForm || currentApp.forms[0]?.id, mode: "visual", trigger: { type: "onUserInput" } }); setSelectedId(w.id); }} icon={<Plus className="w-3 h-3" />}>New</Button></div></div>
+          <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Workflows ({currentApp.workflows.length})</span>
+          <div className="grid grid-cols-3 gap-1">
+            <Button size="xs" onClick={() => { const w = createWorkflow({ name: "New Workflow", formId: filterForm || currentApp.forms[0]?.id, mode: "visual", trigger: { type: "onUserInput" } }); setSelectedId(w.id); }} icon={<Plus className="w-3 h-3" />} className="w-full justify-center">New</Button>
+            <Button size="xs" variant="outline" onClick={() => setAiOpen({ mode: "create" })} icon={<Sparkles className="w-3 h-3 text-indigo-600" />} title="Describe a rule in plain words — the AI writes a checked script" className="w-full justify-center">AI</Button>
+            <Button size="xs" variant="outline" onClick={() => setTemplatesOpen(true)} icon={<Blocks className="w-3 h-3 text-amber-500" />} title="Start from a working script" className="w-full justify-center">Templates</Button>
+          </div>
           <select value={filterForm} onChange={(e) => setFilterForm(e.target.value)} className="w-full text-[11px] border border-slate-200 rounded-md px-2 py-1 bg-slate-50"><option value="">All forms</option>{currentApp.forms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
@@ -98,7 +129,7 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
 
       <div className="flex-1 overflow-y-auto min-h-0 bg-slate-100/60 p-6">
         {!wf || !form ? (
-          <EmptyState icon={<Zap className="w-6 h-6" />} title="Select a workflow" description="Automate calculations, validations, cross-form updates and notifications." action={<Button size="sm" onClick={() => setTemplatesOpen(true)} icon={<Sparkles className="w-3.5 h-3.5" />}>Start from template</Button>} />
+          <EmptyState icon={<Zap className="w-6 h-6" />} title="Select a workflow" description="Automate calculations, validations, cross-form fills, stock updates and notifications — describe the rule and the AI writes a checked script." action={<div className="flex gap-2"><Button size="sm" onClick={() => setAiOpen({ mode: "create" })} icon={<Sparkles className="w-3.5 h-3.5" />}>Write with AI</Button><Button size="sm" variant="outline" onClick={() => setTemplatesOpen(true)} icon={<Blocks className="w-3.5 h-3.5" />}>Start from template</Button></div>} />
         ) : (
           <div className="max-w-4xl mx-auto space-y-4">
             <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-3xs space-y-4">
@@ -132,7 +163,8 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
             {wf.mode === "code" ? (
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
                 <div className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden">
-                  <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between text-xs"><span className="font-semibold text-slate-700 flex items-center gap-1.5"><Code2 className="w-3.5 h-3.5 text-indigo-600" /> Script — sandboxed JavaScript</span>{syntax.ok ? <span className="text-emerald-700 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Syntax OK</span> : <span className="text-rose-600 flex items-center gap-2"><span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {syntax.error}</span><Button size="xs" variant="subtle" loading={fixing} icon={<Sparkles className="w-3 h-3" />} onClick={async () => { setFixing(true); try { const fixed = await fixScriptWithAi(wf.codeScript || "", syntax.error || "syntax error", form, currentApp); up({ codeScript: fixed }); showToast("Script repaired by AI — review it", "success"); } catch (e: any) { showToast(e?.message || "AI fix failed", "error"); } finally { setFixing(false); } }}>Fix with AI</Button></span>}</div>
+                  <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between gap-2 text-xs"><span className="font-semibold text-slate-700 flex items-center gap-1.5"><Code2 className="w-3.5 h-3.5 text-indigo-600" /> Script — sandboxed JavaScript</span><span className="flex items-center gap-2"><Button size="xs" variant="subtle" icon={<Wand2 className="w-3 h-3" />} onClick={() => setAiOpen({ mode: "modify" })} title={wf.codeScript ? "Describe a change; the script is rewritten and re-checked" : "Describe the rule; the AI writes the script"}>{wf.codeScript ? "Edit with AI" : "Write with AI"}</Button>{wf.codeScript && <Button size="xs" variant="subtle" loading={Boolean(explanationFor?.busy)} icon={<MessageSquareText className="w-3 h-3" />} onClick={explain} title="Plain-language explanation of what this script does">Explain</Button>}{syntax.ok ? <span className="text-emerald-700 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Syntax OK</span> : <span className="text-rose-600 flex items-center gap-2"><span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {syntax.error}</span><Button size="xs" variant="subtle" loading={fixing} icon={<Sparkles className="w-3 h-3" />} onClick={async () => { setFixing(true); try { const fixed = await fixScriptWithAi(wf.codeScript || "", syntax.error || "syntax error", form, currentApp); up({ codeScript: fixed }); showToast("Script repaired by AI — review it", "success"); } catch (e: any) { showToast(e?.message || "AI fix failed", "error"); } finally { setFixing(false); } }}>Fix with AI</Button></span>}</span></div>
+                  {explanationFor && !explanationFor.busy && <div className="px-4 py-3 border-b border-slate-100 bg-indigo-50/60 text-xs text-slate-700 relative"><button type="button" onClick={() => setExplanation(null)} className="absolute top-2 right-2 text-slate-400 hover:text-slate-600" aria-label="Close"><X className="w-3.5 h-3.5" /></button><div className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 mb-1 flex items-center gap-1"><MessageSquareText className="w-3 h-3" /> What this workflow does</div><div className="whitespace-pre-wrap leading-relaxed pr-5">{explanationFor.text}</div></div>}
                   <textarea value={wf.codeScript || ""} onChange={(e) => up({ codeScript: e.target.value })} spellCheck={false} rows={18} placeholder={`// Read & write fields via input.<link_name>\ninput.amount = input.quantity * input.rate;\n\nif (input.amount > 10000) confirm("Large order. Continue anyway?");\n\n// After save: update stock in another form\nfor (const row of input.items) increment("item", row.item, "stock", -row.quantity);`} className="w-full font-mono text-xs p-4 bg-slate-900 text-emerald-200 placeholder:text-slate-500 focus:outline-none min-h-[380px] leading-relaxed" onKeyDown={(e) => { if (e.key === "Tab") { e.preventDefault(); const t = e.currentTarget; const s = t.selectionStart; up({ codeScript: (wf.codeScript || "").slice(0, s) + "  " + (wf.codeScript || "").slice(t.selectionEnd) }); setTimeout(() => t.setSelectionRange(s + 2, s + 2), 0); } }} />
                   <div className="px-4 py-2 border-t border-slate-100 text-[11px] text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
                     <span>Fields:</span>{fieldOptions.slice(0, 12).map((f) => <button key={f.id} type="button" onClick={() => up({ codeScript: (wf.codeScript || "") + `input.${f.linkName}` })} className="font-mono text-indigo-700 hover:underline">input.{f.linkName}</button>)}
@@ -145,6 +177,9 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
               </div>
             ) : (
               <div className="space-y-3">
+                {wf.actions.length === 0 && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-xs text-indigo-900 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-indigo-600" /> Prefer to describe the rule in words? The AI writes a checked script for this workflow.</span><Button size="xs" variant="outline" icon={<Wand2 className="w-3 h-3" />} onClick={() => setAiOpen({ mode: "modify" })}>Write with AI</Button></div>
+                )}
                 {wf.actions.map((a, i) => (
                   <ActionEditor key={a.id} action={a} index={i} wf={wf} form={form} app={currentApp} fieldOptions={fieldOptions} onChange={(p) => upAction(a.id, p)} onRemove={() => up({ actions: wf.actions.filter((x) => x.id !== a.id) })} onMove={(d) => { const n = [...wf.actions]; const j = i + d; if (j < 0 || j >= n.length) return; [n[i], n[j]] = [n[j], n[i]]; up({ actions: n }); }} />
                 ))}
@@ -172,6 +207,7 @@ export const WorkflowBuilderView: React.FC<{ workflowId?: string }> = ({ workflo
         </Modal>
       )}
       {testOpen && wf && form && <TestRunModal wf={wf} onClose={() => setTestOpen(false)} />}
+      {aiOpen && <WorkflowAiModal formId={filterForm || wf?.formId || currentApp.forms[0]?.id} existing={aiOpen.mode === "modify" && wf?.codeScript ? wf : null} target={aiOpen.mode === "modify" ? wf : null} onClose={() => setAiOpen(null)} onApply={applyAi} />}
       {logsOpen && wf && <LogsModal wf={wf} onClose={() => setLogsOpen(false)} />}
       <ConfirmDialog isOpen={Boolean(deleteId)} onClose={() => setDeleteId(null)} onConfirm={() => { if (deleteId) { deleteWorkflow(deleteId); setSelectedId(null); } }} title="Delete workflow" message="This automation will stop running immediately." />
     </div>
@@ -219,7 +255,7 @@ const ActionEditor: React.FC<{ action: WorkflowAction; index: number; wf: Workfl
           </div>
         )}
 
-        {needsTarget && <Select size="sm" label="Target field" value={action.targetFieldId || ""} onChange={(e) => onChange({ targetFieldId: e.target.value })}><option value="">Choose…</option>{fieldOptions.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}</Select>}
+        {needsTarget && <Select size="sm" label="Target field" value={action.targetFieldId || ""} onChange={(e) => onChange({ targetFieldId: e.target.value })}><option value="">Choose…</option>{["setHidden", "setVisible", "setReadonly", "setEditable"].includes(action.type) && <option value="*">★ All fields</option>}{fieldOptions.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}{["setHidden", "setVisible", "setReadonly", "setEditable"].includes(action.type) && form.fields.filter((f: any) => f.type === "subform").flatMap((sf: any) => (sf.subform?.columns || []).map((c: any) => <option key={`${sf.id}.${c.id}`} value={`${sf.id}.${c.id}`}>{sf.label} › {c.label} (column)</option>))}</Select>}
         {action.type === "setValue" && <Input size="sm" label="Value" value={action.value ?? ""} onChange={(e) => onChange({ value: e.target.value })} />}
         {action.type === "copyField" && <Select size="sm" label="Copy from" value={action.copySourceFieldId || ""} onChange={(e) => onChange({ copySourceFieldId: e.target.value })}><option value="">Choose…</option>{fieldOptions.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}</Select>}
         {action.type === "calculateValue" && <FormulaEditor value={action.expression || ""} onChange={(v) => onChange({ expression: v, visualCalculation: undefined })} form={form} app={app} rows={2} placeholder="quantity * rate" sample={false} />}
@@ -305,7 +341,7 @@ const TestRunModal: React.FC<{ wf: WorkflowDefinition; onClose: () => void }> = 
 
   const run = () => {
     const triggerField = wf.trigger.fieldId?.split(".")[0];
-    const r = executeWorkflows([{ ...wf, active: true }], wf.trigger.type === "onEdit" ? "onLoad" : wf.trigger.type, triggerField || form.fields[0]?.id, values, form, { app: currentApp, recordsMap, user: user ? { email: user.email, name: user.name } : null, isEdit: wf.trigger.type === "onEdit" });
+    const r = executeWorkflows([{ ...wf, active: true }], wf.trigger.type === "onEdit" || wf.trigger.type === "onOpen" ? "onLoad" : wf.trigger.type, triggerField || form.fields[0]?.id, values, form, { app: currentApp, recordsMap, user: user ? { email: user.email, name: user.name } : null, isEdit: wf.trigger.type === "onEdit" });
     setResult(r);
   };
 

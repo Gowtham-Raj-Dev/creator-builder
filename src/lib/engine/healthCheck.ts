@@ -219,9 +219,12 @@ export function runHealthCheck(app: AppDefinition): HealthIssue[] {
       if (!s.ok) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: `Script syntax error: ${s.error}` });
     }
     for (const a of wf.actions) {
-      if (a.targetFieldId) {
-        if (!form.fields.some((f) => f.id === a.targetFieldId || f.linkName === a.targetFieldId)) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: `Action "${a.type}" targets a deleted field.` });
-        noteRef(form.id, a.targetFieldId);
+      if (a.targetFieldId && a.targetFieldId !== "*") { // "*" = all fields (visibility / read-only actions)
+        const [top, col] = a.targetFieldId.split(".");
+        const target = form.fields.find((f) => f.id === top || f.linkName === top);
+        if (!target) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: `Action "${a.type}" targets a deleted field.` });
+        else if (col && !(target.subform?.columns || []).some((c) => c.id === col || c.linkName === col)) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: `Action "${a.type}" targets a deleted column of "${target.label}".` });
+        noteRef(form.id, top);
       }
       if (a.crossFormUpdate && !formIds.has(a.crossFormUpdate.targetFormId)) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: "Cross-form update targets a missing form." });
       if (a.createRecord && !formIds.has(a.createRecord.targetFormId)) push({ severity: "error", area: "workflow", entityId: wf.id, entityName: wf.name, message: "Create-record action targets a missing form." });

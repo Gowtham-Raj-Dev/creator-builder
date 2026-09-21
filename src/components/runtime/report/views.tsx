@@ -5,7 +5,8 @@ import { FormDefinition, RecordDefinition, ReportColumnConfig, ReportDefinition 
 import { conditionalClasses, aggregateValues, getRawValue, pivotRecords, RecordGroup, toNumber } from "@/lib/engine/reportEngine";
 import { formatCurrency } from "@/lib/utils/formatters";
 import { IconButton } from "@/components/ui/Button";
-import { ArrowUpDown, ArrowUp, ArrowDown, Printer, Edit, Trash2, Copy, ExternalLink, ChevronRight, ChevronLeft, GripVertical, Check, X as XIcon } from "lucide-react";
+import { RowActionsMenu } from "./RowActionsMenu";
+import { ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, ChevronRight, ChevronLeft, GripVertical, Check, X as XIcon } from "lucide-react";
 
 export interface RowActions {
   onOpen: (rec: RecordDefinition) => void;
@@ -13,6 +14,7 @@ export interface RowActions {
   onDelete?: (rec: RecordDefinition) => void;
   onPrint?: (rec: RecordDefinition) => void;
   onDuplicate?: (rec: RecordDefinition) => void;
+  onCopyLink?: (rec: RecordDefinition) => void;
   onLookupClick?: (fieldId: string, targetId: string) => void;
 }
 
@@ -79,8 +81,11 @@ export const TableView: React.FC<
     const isSel = selected.has(rec.id);
     return (
       <tr key={rec.id} onClick={() => actions.onOpen(rec)} className={`cursor-pointer transition-colors group ${isSel ? "bg-blue-50/70" : cf.row || (idx % 2 ? "bg-slate-50/40" : "bg-white")} hover:bg-blue-50/50`}>
-        <td className="px-3 py-2.5 sticky left-0 z-[1] bg-inherit" onClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={isSel} onChange={() => onToggleSelect(rec.id)} className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600" />
+        <td className="pl-3 pr-1 py-2 sticky left-0 z-[1] bg-inherit" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5">
+            <input type="checkbox" checked={isSel} onChange={() => onToggleSelect(rec.id)} className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600" />
+            <RowActionsMenu rec={rec} actions={actions} perms={perms} className="opacity-60 group-hover:opacity-100" />
+          </div>
         </td>
         {columns.map((col, ci) => {
           const field = form.fields.find((f) => f.id === col.fieldId);
@@ -127,19 +132,11 @@ export const TableView: React.FC<
           );
         })}
         {showRunning && <td className="px-3 py-2.5 text-xs text-right tabular-nums font-semibold text-indigo-700">{formatAgg(form, report.runningTotalFieldId!, running || 0)}</td>}
-        <td className="px-2 py-2 text-center whitespace-nowrap sticky right-0 bg-inherit" onClick={(e) => e.stopPropagation()}>
-          <div className="inline-flex items-center opacity-50 group-hover:opacity-100 transition-opacity">
-            {perms.print && actions.onPrint && <IconButton size="sm" onClick={() => actions.onPrint!(rec)} title="Print"><Printer className="w-3.5 h-3.5" /></IconButton>}
-            {perms.create && actions.onDuplicate && <IconButton size="sm" onClick={() => actions.onDuplicate!(rec)} title="Duplicate"><Copy className="w-3.5 h-3.5" /></IconButton>}
-            {perms.edit && actions.onEdit && <IconButton size="sm" tone="primary" onClick={() => actions.onEdit!(rec)} title="Edit"><Edit className="w-3.5 h-3.5" /></IconButton>}
-            {perms.delete && actions.onDelete && <IconButton size="sm" tone="danger" onClick={() => actions.onDelete!(rec)} title="Delete"><Trash2 className="w-3.5 h-3.5" /></IconButton>}
-          </div>
-        </td>
       </tr>
     );
   };
 
-  const colCount = columns.length + 2 + (showRunning ? 1 : 0);
+  const colCount = columns.length + 1 + (showRunning ? 1 : 0);
   const runningTotals = useMemo(() => { const m: Record<string, number> = {}; if (!showRunning) return m; let acc = 0; const seq = groups ? groups.flatMap((g) => g.records) : records; for (const r of seq) { acc += toNumber(getRawValue(r, report.runningTotalFieldId!, form)); m[r.id] = acc; } return m; }, [showRunning, groups, records, report.runningTotalFieldId, form]);
 
   return (
@@ -147,7 +144,7 @@ export const TableView: React.FC<
       <table className="w-full text-left border-collapse min-w-[640px]">
         <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600 uppercase tracking-wide border-b border-slate-200 sticky top-0 z-[2]">
           <tr>
-            <th className="px-3 py-2.5 w-8 sticky left-0 bg-slate-50 z-[3]"><input type="checkbox" checked={allSelected} onChange={() => onToggleAll(allSelected ? [] : allIds)} className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600" /></th>
+            <th className="pl-3 pr-1 py-2.5 w-16 sticky left-0 bg-slate-50 z-[3]"><input type="checkbox" checked={allSelected} onChange={() => onToggleAll(allSelected ? [] : allIds)} className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600" title="Select all" /></th>
             {columns.map((col) => {
               const num = isNumericField(form, col.fieldId);
               const active = sortField === col.fieldId;
@@ -162,7 +159,6 @@ export const TableView: React.FC<
               );
             })}
             {showRunning && <th className="px-3 py-2.5 text-right whitespace-nowrap text-indigo-700">Running total</th>}
-            <th className="px-2 py-2.5 w-28 text-center sticky right-0 bg-slate-50">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -233,10 +229,7 @@ export const GridView: React.FC<CommonProps> = ({ report, form, records, display
             <div className="p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-sm font-bold text-slate-900 truncate">{titleId ? displayValue(rec, titleId) || rec.id : rec.id}</h3>
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                  {perms.edit && actions.onEdit && <IconButton size="sm" tone="primary" onClick={() => actions.onEdit!(rec)}><Edit className="w-3.5 h-3.5" /></IconButton>}
-                  {perms.delete && actions.onDelete && <IconButton size="sm" tone="danger" onClick={() => actions.onDelete!(rec)}><Trash2 className="w-3.5 h-3.5" /></IconButton>}
-                </div>
+                <RowActionsMenu rec={rec} actions={actions} perms={perms} className="-mr-1 -mt-1" />
               </div>
               {cfg.subtitleFieldId && <p className="text-xs text-slate-500">{displayValue(rec, cfg.subtitleFieldId)}</p>}
               <dl className="space-y-1 pt-1 border-t border-slate-100">
@@ -285,9 +278,10 @@ export const KanbanView: React.FC<CommonProps & { onMove?: (rec: RecordDefinitio
             <div className="p-2 space-y-2 overflow-y-auto flex-1">
               {lane.records.map((rec) => (
                 <div key={rec.id} draggable={perms.edit && Boolean(onMove)} onDragStart={() => setDragId(rec.id)} onClick={() => actions.onOpen(rec)} className={`bg-white rounded-lg border border-slate-200 p-3 shadow-3xs hover:border-blue-300 cursor-pointer space-y-1.5 ${dragId === rec.id ? "opacity-50" : ""}`}>
-                  <div className="flex items-start gap-1.5">
+                  <div className="flex items-start gap-1.5 group">
                     {perms.edit && onMove && <GripVertical className="w-3.5 h-3.5 text-slate-300 mt-0.5 shrink-0" />}
-                    <span className="text-xs font-semibold text-slate-900 leading-snug">{titleId ? displayValue(rec, titleId) || rec.id : rec.id}</span>
+                    <span className="text-xs font-semibold text-slate-900 leading-snug flex-1">{titleId ? displayValue(rec, titleId) || rec.id : rec.id}</span>
+                    <RowActionsMenu rec={rec} actions={actions} perms={perms} size="xs" className="-mr-1 -mt-0.5" />
                   </div>
                   {cardFields.map((f) => (
                     <div key={f!.id} className="text-[11px] text-slate-500 flex justify-between gap-2"><span>{f!.label}</span><span className="text-slate-800 font-medium truncate">{displayValue(rec, f!.id) || "—"}</span></div>
@@ -305,7 +299,7 @@ export const KanbanView: React.FC<CommonProps & { onMove?: (rec: RecordDefinitio
 
 // ── Calendar ─────────────────────────────────────────────────────────────────
 
-export const CalendarView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions }) => {
+export const CalendarView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions, perms }) => {
   const dateField = form.fields.find((f) => f.id === report.calendar?.dateFieldId) || form.fields.find((f) => f.type === "date" || f.type === "datetime");
   const titleId = report.calendar?.titleFieldId || form.titleFieldId || form.fields.find((f) => f.type !== "section" && f.id !== dateField?.id)?.id;
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
@@ -346,7 +340,7 @@ export const CalendarView: React.FC<CommonProps> = ({ report, form, records, dis
             <div key={i} className={`bg-white min-h-[96px] p-1.5 ${!d ? "bg-slate-50/60" : ""}`}>
               {d && <div className={`text-[11px] font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${key === todayKey ? "bg-blue-600 text-white" : "text-slate-500"}`}>{d.getDate()}</div>}
               <div className="space-y-1">
-                {items.slice(0, 3).map((r) => <button key={r.id} type="button" onClick={() => actions.onOpen(r)} className="w-full text-left text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-100 truncate hover:bg-blue-100">{titleId ? displayValue(r, titleId) || r.id : r.id}</button>)}
+                {items.slice(0, 3).map((r) => <div key={r.id} className="flex items-center gap-0.5 group"><button type="button" onClick={() => actions.onOpen(r)} className="flex-1 min-w-0 text-left text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-100 truncate hover:bg-blue-100">{titleId ? displayValue(r, titleId) || r.id : r.id}</button><RowActionsMenu rec={r} actions={actions} perms={perms} size="xs" hover /></div>)}
                 {items.length > 3 && <div className="text-[10px] text-slate-400 pl-1">+{items.length - 3} more</div>}
               </div>
             </div>
@@ -359,7 +353,7 @@ export const CalendarView: React.FC<CommonProps> = ({ report, form, records, dis
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
 
-export const TimelineView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions }) => {
+export const TimelineView: React.FC<CommonProps> = ({ report, form, records, displayValue, actions, perms }) => {
   const dateField = form.fields.find((f) => f.id === report.calendar?.dateFieldId) || form.fields.find((f) => f.type === "date" || f.type === "datetime");
   const titleId = report.calendar?.titleFieldId || form.titleFieldId || form.fields.find((f) => f.type !== "section")?.id;
   const sorted = [...records].sort((a, b) => String(dateField ? b.data?.[dateField.id] : b.createdAt).localeCompare(String(dateField ? a.data?.[dateField.id] : a.createdAt)));
@@ -369,10 +363,13 @@ export const TimelineView: React.FC<CommonProps> = ({ report, form, records, dis
         {sorted.map((r) => (
           <li key={r.id} className="relative">
             <span className="absolute -left-[31px] top-1 w-3.5 h-3.5 rounded-full bg-blue-600 ring-4 ring-white" />
-            <button type="button" onClick={() => actions.onOpen(r)} className="text-left w-full bg-white border border-slate-200 rounded-xl p-3.5 shadow-3xs hover:border-blue-300">
-              <div className="text-[11px] text-slate-400 font-medium">{dateField ? displayValue(r, dateField.id) : new Date(r.createdAt).toLocaleString()}</div>
-              <div className="text-sm font-semibold text-slate-900 mt-0.5">{titleId ? displayValue(r, titleId) || r.id : r.id}</div>
-            </button>
+            <div className="flex items-start gap-1 group">
+              <button type="button" onClick={() => actions.onOpen(r)} className="text-left flex-1 min-w-0 bg-white border border-slate-200 rounded-xl p-3.5 shadow-3xs hover:border-blue-300">
+                <div className="text-[11px] text-slate-400 font-medium">{dateField ? displayValue(r, dateField.id) : new Date(r.createdAt).toLocaleString()}</div>
+                <div className="text-sm font-semibold text-slate-900 mt-0.5">{titleId ? displayValue(r, titleId) || r.id : r.id}</div>
+              </button>
+              <RowActionsMenu rec={r} actions={actions} perms={perms} className="mt-2" />
+            </div>
           </li>
         ))}
         {sorted.length === 0 && <li className="text-xs text-slate-400">No records.</li>}

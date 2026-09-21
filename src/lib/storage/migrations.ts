@@ -47,6 +47,12 @@ const migrations: Record<number, Migration> = {
       ...(app.settings || {}),
     },
   }),
+  // v6 → v7: "On load" used to fire for new AND existing records. It now means new only, and the
+  // new "onOpen" trigger is the old behaviour — so existing onLoad workflows are moved to onOpen.
+  6: (app) => ({
+    ...app,
+    workflows: (app.workflows || []).map((w) => (w.trigger?.type === "onLoad" ? { ...w, trigger: { ...w.trigger, type: "onOpen" as const } } : w)),
+  }),
 };
 
 function migrateReconciliation(r: ReportDefinition): ReportDefinition {

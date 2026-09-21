@@ -9,6 +9,10 @@
  * compound assignment, optional chaining, nullish coalescing, method calls on
  * strings/arrays/numbers, and any host functions passed in `globals`.
  *
+ * `async` / `await` are accepted but are no-ops: every host function is synchronous, so
+ * `await get("po", id)` simply evaluates to the record. (Scripts written in the familiar
+ * async style keep working instead of failing with "await is not defined".)
+ *
  * Execution is bounded by a step budget to stop infinite loops.
  */
 
@@ -17,7 +21,7 @@
 type TokType = "num" | "str" | "tpl" | "ident" | "kw" | "punc" | "eof";
 interface Tok { t: TokType; v: any; line: number; }
 
-const KEYWORDS = new Set(["var", "let", "const", "function", "return", "if", "else", "for", "while", "do", "break", "continue", "true", "false", "null", "undefined", "new", "typeof", "in", "of", "try", "catch", "finally", "throw", "instanceof", "delete", "void"]);
+const KEYWORDS = new Set(["var", "let", "const", "function", "return", "if", "else", "for", "while", "do", "break", "continue", "true", "false", "null", "undefined", "new", "typeof", "in", "of", "try", "catch", "finally", "throw", "instanceof", "delete", "void", "async", "await"]);
 const PUNCS = ["...", "===", "!==", "**=", "<<=", ">>=", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--", "+=", "-=", "*=", "/=", "%=", "**", "{", "}", "(", ")", "[", "]", ";", ",", ".", "+", "-", "*", "/", "%", "<", ">", "=", "!", "?", ":", "&", "|", "^", "~"];
 
 export class ScriptSyntaxError extends Error {
@@ -129,6 +133,7 @@ class Parser {
       switch (k.v) {
         case "var": case "let": case "const": return this.parseVar();
         case "function": return this.parseFunction(true);
+        case "async": if (this.peek(1).t === "kw" && this.peek(1).v === "function") { this.next(); return this.parseFunction(true); } break;
         case "return": { this.next(); const arg = this.is(";") || this.is("}") || this.peek().t === "eof" || this.peek().line !== k.line ? null : this.parseExpression(); return { type: "Return", arg }; }
         case "if": return this.parseIf();
         case "for": return this.parseFor();
@@ -238,6 +243,14 @@ class Parser {
   }
 
   private parseAssignment(): Node {
+    // `async` prefix on arrow functions is accepted and ignored (everything is synchronous)
+    if (this.is("async") && this.peek(1).t !== "punc") {
+      const nxt = this.peek(1);
+      if ((nxt.t === "ident" && this.peek(2).v === "=>" && this.peek(2).t === "punc") || (nxt.t === "kw" && nxt.v === "function")) this.next();
+    } else if (this.is("async") && this.peek(1).v === "(" && this.peek(1).t === "punc") {
+      const save = this.i; this.next();
+      if (!this.looksLikeArrow()) this.i = save;
+    }
     // arrow function detection
     if (this.peek().t === "ident" && this.peek(1).v === "=>" && this.peek(1).t === "punc") {
       const name = this.next().v; this.next();
@@ -302,6 +315,7 @@ class Parser {
     const k = this.peek();
     if (k.t === "punc" && ["!", "-", "+", "~"].includes(k.v)) { this.next(); return { type: "Unary", op: k.v, arg: this.parseUnary() }; }
     if (k.t === "kw" && (k.v === "typeof" || k.v === "void" || k.v === "delete")) { this.next(); return { type: "Unary", op: k.v, arg: this.parseUnary() }; }
+    if (k.t === "kw" && k.v === "await") { this.next(); return { type: "Await", arg: this.parseUnary() }; }
     if (k.t === "punc" && (k.v === "++" || k.v === "--")) { this.next(); return { type: "Update", op: k.v, prefix: true, arg: this.parseUnary() }; }
     return this.parsePostfix();
   }
@@ -353,6 +367,7 @@ class Parser {
       if (k.v === "null") return { type: "Literal", value: null };
       if (k.v === "undefined") return { type: "Literal", value: undefined };
       if (k.v === "function") { this.i--; return this.parseFunction(false); }
+      if (k.v === "async" && this.is("function")) return this.parseFunction(false);
       throw new ScriptSyntaxError(`Unexpected keyword '${k.v}'`, k.line);
     }
     if (k.t === "ident") return { type: "Identifier", name: k.v };
@@ -366,7 +381,7 @@ class Parser {
           else {
             let key: Node; let computed = false;
             if (this.is("[")) { this.next(); key = this.parseAssignment(); this.eat("]"); computed = true; }
-            else { const t = this.next(); key = { type: "Literal", value: t.v }; if (t.t === "ident" && (this.is(",") || this.is("}"))) { props.push({ key, value: { type: "Identifier", name: t.v } }); if (!this.is("}")) this.eat(","); continue; } }
+            else { let t = this.next(); if (t.t === "kw" && t.v === "async" && this.peek().t === "ident" && this.peek(1).v === "(") t = this.next(); key = { type: "Literal", value: t.v }; if (t.t === "ident" && (this.is(",") || this.is("}"))) { props.push({ key, value: { type: "Identifier", name: t.v } }); if (!this.is("}")) this.eat(","); continue; } }
             if (this.is("(")) { const params = this.parseParams(); const body = this.parseBlock(); props.push({ key, computed, value: { type: "FunctionExpr", params, body } }); }
             else { this.eat(":"); props.push({ key, computed, value: this.parseAssignment() }); }
           }
@@ -540,6 +555,11 @@ class Interpreter {
         }
         throw new ScriptRuntimeError(`Unknown operator ${n.op}`);
       }
+      case "Await": {
+        const v = this.evaluate(n.arg, scope);
+        if (v && typeof v.then === "function") throw new ScriptRuntimeError("await on a Promise is not supported — script functions (get, fetch, insert…) return values directly, no await needed");
+        return v;
+      }
       case "Unary": {
         if (n.op === "typeof") { try { const v = this.evaluate(n.arg, scope); return v instanceof InterpFn ? "function" : typeof v; } catch { return "undefined"; } }
         if (n.op === "delete") { if (n.arg.type === "Member") { const o = this.evaluate(n.arg.obj, scope); delete o[this.propKey(n.arg, scope)]; } return true; }
@@ -639,6 +659,8 @@ export function createSafeGlobals(extra: Record<string, any> = {}, onLog?: (...a
     Date, Array: Object.assign((...a: any[]) => new Array(...a), { isArray: Array.isArray, from: Array.from, of: Array.of }),
     Object: safeObjectApi(), String: (v: any) => String(v ?? ""), Number: (v: any) => Number(v), Boolean: (v: any) => Boolean(v),
     Map, Set, Error,
+    // synchronous stand-ins so `Promise.all([...])` / `Promise.resolve(x)` in async-style scripts still work
+    Promise: { all: (a: any) => Array.from(a ?? []), allSettled: (a: any) => Array.from(a ?? []).map((value) => ({ status: "fulfilled", value })), resolve: (v: any) => v, reject: (e: any) => { throw e instanceof Error ? e : new Error(e && typeof e === "object" && "message" in e ? String(e.message) : String(e)); } },
     parseInt, parseFloat, isNaN, isFinite, encodeURIComponent, decodeURIComponent,
     console: { log: (...a: any[]) => onLog?.(...a), warn: (...a: any[]) => onLog?.(...a), error: (...a: any[]) => onLog?.(...a), info: (...a: any[]) => onLog?.(...a) },
     undefined: undefined, NaN, Infinity,

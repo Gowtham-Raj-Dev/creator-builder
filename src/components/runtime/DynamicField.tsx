@@ -18,9 +18,11 @@ interface DynamicFieldProps {
   isHidden?: boolean;
   parentValues?: Record<string, any>;
   computedValue?: any; // for formula / rollup display
+  /** subform only: columns a workflow made read-only / hidden */
+  columnState?: { readonly: string[]; hidden: string[] };
 }
 
-export const DynamicField: React.FC<DynamicFieldProps> = ({ field, value, onChange, error, isReadonly = false, isHidden = false, parentValues, computedValue }) => {
+export const DynamicField: React.FC<DynamicFieldProps> = ({ field, value, onChange, error, isReadonly = false, isHidden = false, parentValues, computedValue, columnState }) => {
   if (isHidden) return null;
   const disabled = isReadonly || Boolean(field.readonly);
   const helper = field.description;
@@ -45,7 +47,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({ field, value, onChan
 
     case "subform":
       if (!field.subform) return null;
-      return <SubformField field={field} rows={Array.isArray(value) ? value : []} onChange={(rows, meta) => onChange(rows, { subform: meta })} disabled={disabled} error={error} parentValues={parentValues} />;
+      return <SubformField field={field} rows={Array.isArray(value) ? value : []} onChange={(rows, meta) => onChange(rows, { subform: meta })} disabled={disabled} error={error} parentValues={parentValues} readonlyColumns={columnState?.readonly} hiddenColumns={columnState?.hidden} />;
 
     case "autonumber":
       return (

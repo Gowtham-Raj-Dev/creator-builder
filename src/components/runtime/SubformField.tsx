@@ -25,14 +25,18 @@ interface SubformFieldProps {
   error?: string;
   parentValues?: Record<string, any>;
   hideLabel?: boolean;
+  /** column ids a workflow made read-only (setReadonly("items.rate")) */
+  readonlyColumns?: string[];
+  /** column ids a workflow hid (hideField("items.rate")) */
+  hiddenColumns?: string[];
 }
 
 const NUMERIC = ["number", "currency", "percentage", "decimal", "rating", "formula"];
 
-export const SubformField: React.FC<SubformFieldProps> = ({ field, rows = [], onChange, disabled, error, parentValues, hideLabel }) => {
+export const SubformField: React.FC<SubformFieldProps> = ({ field, rows = [], onChange, disabled, error, parentValues, hideLabel, readonlyColumns, hiddenColumns }) => {
   const { app, recordsMap } = useLiveApp();
   const config = field.subform!;
-  const columns = useMemo(() => (config.columns || []).filter((c) => !c.hidden), [config.columns]);
+  const columns = useMemo(() => (config.columns || []).filter((c) => !c.hidden && !hiddenColumns?.includes(c.id)), [config.columns, hiddenColumns]);
   const [bulkCount, setBulkCount] = useState(3);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -99,7 +103,7 @@ export const SubformField: React.FC<SubformFieldProps> = ({ field, rows = [], on
 
   const renderCell = (row: Record<string, any>, rIdx: number, col: SubformColumn) => {
     const val = row[col.id];
-    const ro = disabled || col.readonly || col.type === "formula" || Boolean(col.formula?.expression);
+    const ro = disabled || col.readonly || col.type === "formula" || Boolean(col.formula?.expression) || Boolean(readonlyColumns?.includes(col.id));
     const base = `w-full text-xs px-2 py-1.5 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/25 focus:border-blue-500 bg-white transition-all ${ro ? "bg-slate-50 text-slate-600 border-slate-200" : "border-slate-300"}`;
 
     if (col.type === "formula" || col.formula?.expression) {
