@@ -11,12 +11,15 @@ import { Modal } from "@/components/ui/Modal";
 import { ShareModal } from "./ShareModal";
 import { AppIconPicker } from "@/components/ui/AppIcon";
 import { useToast } from "@/context/ToastContext";
+import { useAuth } from "@/context/AuthContext";
+import { computePermissions } from "@/lib/auth/permissions";
 import { Settings, Download, Upload, Palette, Layers, Trash2, Share2, LayoutTemplate, Database, Info } from "lucide-react";
 
 const ACCENTS = ["#2563eb", "#7c3aed", "#059669", "#ea580c", "#db2777", "#0891b2", "#4f46e5", "#0f172a"];
 
 export const AppSettingsView: React.FC = () => {
   const { currentApp, updateCurrentApp, exportAppJson, importAppJson, saveAsTemplate } = useAppBuilder();
+  const { user, isOwner: isPlatformOwner } = useAuth();
   const { showToast } = useToast();
   const router = useRouter();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -27,6 +30,8 @@ export const AppSettingsView: React.FC = () => {
   const [tplCat, setTplCat] = useState("General");
   const fileRef = useRef<HTMLInputElement>(null);
   if (!currentApp) return null;
+  // builder collaborators can edit everything except delete the app / publish templates (Firestore rules enforce both)
+  const isAppOwner = computePermissions(currentApp, user?.email).isOwner;
   const s = currentApp.settings || { theme: "light" as const };
   const setS = (patch: Partial<typeof s>) => updateCurrentApp((prev) => ({ ...prev, settings: { ...(prev.settings || { theme: "light" }), ...patch } }));
 
@@ -70,6 +75,7 @@ export const AppSettingsView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Toggle checked={s.enableTrash !== false} onChange={(v) => setS({ enableTrash: v })} label="Soft delete (trash & restore)" description="Deleted records go to the trash instead of disappearing." />
             <Toggle checked={s.showRecentInSidebar === true} onChange={(v) => setS({ showRecentInSidebar: v })} label="Recent records in sidebar" description="Show the last opened records under the menu (off by default)." />
+            <Toggle checked={s.allowMembersAi === true} onChange={(v) => setS({ allowMembersAi: v })} label="Members can use 'Discuss with AI'" description="Shows the AI consultant in the live app for members. Requires app-specific AI keys (AI Assistant → Provider & keys → This app only) — those keys become readable by members of this app." />
             <Toggle checked={s.enableAudit !== false} onChange={(v) => setS({ enableAudit: v })} label="Audit log" description="Track record & schema changes with user and diff." />
             <Toggle checked={s.enableComments !== false} onChange={(v) => setS({ enableComments: v })} label="Comments & @mentions" description="Discussion thread on every record." />
             <Toggle checked={s.showGlobalSearch !== false} onChange={(v) => setS({ showGlobalSearch: v })} label="Global search (Ctrl+K)" />
@@ -87,16 +93,18 @@ export const AppSettingsView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={exportJson} icon={<Download className="w-3.5 h-3.5" />}>Export app JSON</Button>
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} icon={<Upload className="w-3.5 h-3.5" />}>Import JSON</Button>
-            <div className="flex items-center gap-1.5 ml-auto"><input value={tplCat} onChange={(e) => setTplCat(e.target.value)} className="text-xs border border-slate-300 rounded-lg px-2 py-1.5 w-32" placeholder="Category" /><Button variant="outline" size="sm" onClick={() => saveAsTemplate(tplCat)} icon={<LayoutTemplate className="w-3.5 h-3.5" />}>Save as template</Button></div>
+            {isPlatformOwner && <div className="flex items-center gap-1.5 ml-auto"><input value={tplCat} onChange={(e) => setTplCat(e.target.value)} className="text-xs border border-slate-300 rounded-lg px-2 py-1.5 w-32" placeholder="Category" /><Button variant="outline" size="sm" onClick={() => saveAsTemplate(tplCat)} icon={<LayoutTemplate className="w-3.5 h-3.5" />}>Save as template</Button></div>}
           </div>
           <p className="text-[11px] text-slate-500 mt-2 flex items-center gap-1"><Info className="w-3 h-3" /> Exports contain schema only (forms, reports, pages, workflows, roles, settings) — not records or members. Duplicate the app from the Applications list to copy everything except data.</p>
         </Card>
 
-        <div className="bg-white p-5 rounded-xl border border-rose-200 shadow-3xs space-y-2">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><Trash2 className="w-4 h-4" /> Danger zone</h3>
-          <p className="text-xs text-slate-500">Permanently delete this application, its records, versions and logs from Firestore.</p>
-          <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)} icon={<Trash2 className="w-3.5 h-3.5" />}>Delete application</Button>
-        </div>
+        {isAppOwner && (
+          <div className="bg-white p-5 rounded-xl border border-rose-200 shadow-3xs space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><Trash2 className="w-4 h-4" /> Danger zone</h3>
+            <p className="text-xs text-slate-500">Permanently delete this application, its records, versions and logs from Firestore.</p>
+            <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)} icon={<Trash2 className="w-3.5 h-3.5" />}>Delete application</Button>
+          </div>
+        )}
       </div>
 
       <ConfirmDialog isOpen={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={async () => { await storageService.deleteApp(currentApp.id); showToast("Application deleted", "info"); router.push("/builder"); }} title={`Delete "${currentApp.name}"?`} message="This cannot be undone. All forms, records, versions, audit logs and members will be removed." confirmText="Delete permanently" />

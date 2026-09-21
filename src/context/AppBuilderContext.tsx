@@ -868,7 +868,7 @@ export const AppBuilderProvider: React.FC<{ initialAppIdOrLink?: string; childre
     const app = appRef.current;
     if (!app) return "";
     const rest: Partial<AppDefinition> = { ...app };
-    delete rest.members; delete rest.memberEmails; delete rest.ownerEmail;
+    delete rest.members; delete rest.memberEmails; delete rest.builders; delete rest.builderEmails; delete rest.ownerEmail;
     return JSON.stringify({ ...rest, exportedAt: now(), exportFormat: "yourbuilder/app/v1" }, null, 2);
   }, []);
 
@@ -879,10 +879,10 @@ export const AppBuilderProvider: React.FC<{ initialAppIdOrLink?: string; childre
         if (!parsed || !Array.isArray(parsed.forms)) return { ok: false, error: "Not a valid app export (missing forms)" };
         updateCurrentApp((prev) => {
           if (mode === "replace") {
-            return { ...prev, forms: parsed.forms || [], reports: parsed.reports || [], pages: parsed.pages || [], workflows: parsed.workflows || [], roles: parsed.roles || prev.roles, settings: { ...prev.settings, ...(parsed.settings || {}) } };
+            return { ...prev, forms: parsed.forms || [], reports: parsed.reports || [], pages: parsed.pages || [], workflows: parsed.workflows || [], printTemplates: parsed.printTemplates || [], roles: parsed.roles || prev.roles, settings: { ...prev.settings, ...(parsed.settings || {}) } };
           }
           const merged = (a: any[], b: any[]) => [...a, ...b.filter((x) => !a.some((y) => y.id === x.id))];
-          return { ...prev, forms: merged(prev.forms, parsed.forms || []), reports: merged(prev.reports, parsed.reports || []), pages: merged(prev.pages, parsed.pages || []), workflows: merged(prev.workflows, parsed.workflows || []), roles: merged(prev.roles, parsed.roles || []) };
+          return { ...prev, forms: merged(prev.forms, parsed.forms || []), reports: merged(prev.reports, parsed.reports || []), pages: merged(prev.pages, parsed.pages || []), workflows: merged(prev.workflows, parsed.workflows || []), printTemplates: merged(prev.printTemplates || [], parsed.printTemplates || []), roles: merged(prev.roles, parsed.roles || []) };
         });
         showToast("Schema imported", "success");
         return { ok: true };

@@ -48,12 +48,15 @@ export function normalizeApp(raw: any): AppDefinition {
     roles: raw.roles || [],
     members: raw.members || [],
     memberEmails: raw.memberEmails || [],
+    builders: raw.builders || [],
+    builderEmails: raw.builderEmails || [],
     sharing: raw.sharing || { mode: "private" },
     forms: raw.forms || [],
     reports: raw.reports || [],
     pages: raw.pages || [],
     workflows: raw.workflows || [],
     relationships: raw.relationships || [],
+    printTemplates: raw.printTemplates || [],
     schemaVersion: raw.schemaVersion || 1,
     publishedVersion: raw.publishedVersion,
     publishedAt: raw.publishedAt,
@@ -71,20 +74,38 @@ export class FirestoreDataProvider implements DataProvider {
   async getApps(forEmail?: string | null, isOwner?: boolean): Promise<AppDefinition[]> {
     if (!isBrowser()) return [];
     const db = getDb();
-    let snap;
+    let docs;
     if (isOwner) {
-      snap = await getDocs(collection(db, APPS));
+      docs = (await getDocs(collection(db, APPS))).docs;
     } else if (forEmail) {
-      snap = await getDocs(
-        query(collection(db, APPS), where("memberEmails", "array-contains", forEmail.toLowerCase()))
-      );
+      docs = await this.accessibleAppDocs(forEmail);
     } else {
       return [];
     }
-    return snap.docs
+    return docs
       .map((d) => normalizeApp({ id: d.id, ...d.data() }))
       .filter((a) => !a.isTemplate)
       .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  }
+
+  /** Apps a non-platform-owner can open: owner of, builder collaborator of, or member of. De-duplicated. */
+  private async accessibleAppDocs(email: string) {
+    const db = getDb();
+    const lower = email.toLowerCase();
+    const [owned, builders, members] = await Promise.all([
+      // ownerEmail is compared case-insensitively in the rules, which the query planner can't prove → tolerate a denial
+      getDocs(query(collection(db, APPS), where("ownerEmail", "==", lower))).catch(() => null),
+      getDocs(query(collection(db, APPS), where("builderEmails", "array-contains", lower))),
+      getDocs(query(collection(db, APPS), where("memberEmails", "array-contains", lower))),
+    ]);
+    const seen = new Set<string>();
+    const out: typeof members.docs = [];
+    for (const d of [...(owned?.docs || []), ...builders.docs, ...members.docs]) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      out.push(d);
+    }
+    return out;
   }
 
   async getApp(
@@ -117,12 +138,10 @@ export class FirestoreDataProvider implements DataProvider {
       return null;
     }
 
-    // 3. Member → their apps, filter client side (keeps security rules simple)
+    // 3. App owner / builder collaborator / member → their apps, filter client side (keeps security rules simple)
     if (ctx?.email) {
-      const snap = await getDocs(
-        query(collection(db, APPS), where("memberEmails", "array-contains", ctx.email.toLowerCase()))
-      );
-      const found = snap.docs.find((d) => (d.data().linkName || "").toLowerCase() === link);
+      const docs = await this.accessibleAppDocs(ctx.email);
+      const found = docs.find((d) => (d.data().linkName || "").toLowerCase() === link);
       if (found) return normalizeApp({ id: found.id, ...found.data() });
     }
 
@@ -164,6 +183,8 @@ export class FirestoreDataProvider implements DataProvider {
       memberEmails: Array.from(
         new Set((app.members || []).filter((m) => m.status !== "disabled").map((m) => m.email.toLowerCase()))
       ),
+      builders: app.builders || [],
+      builderEmails: Array.from(new Set((app.builders || []).map((b) => b.email.toLowerCase()))),
       schemaVersion: CURRENT_APP_SCHEMA_VERSION,
       updatedAt: nowIso(),
     });
@@ -302,6 +323,7 @@ export class FirestoreDataProvider implements DataProvider {
         relationships: app.relationships,
         settings: app.settings,
         roles: app.roles,
+        printTemplates: app.printTemplates || [],
       },
     };
     await setDoc(doc(getDb(), APPS, app.id, "versions", version.id), sanitizeForFirestore(version));
@@ -425,6 +447,8 @@ export class FirestoreDataProvider implements DataProvider {
       templateCategory: category || "General",
       members: [],
       memberEmails: [],
+      builders: [],
+      builderEmails: [],
       sharing: { mode: "private" },
       createdAt: nowIso(),
       updatedAt: nowIso(),

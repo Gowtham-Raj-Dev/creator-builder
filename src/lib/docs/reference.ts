@@ -90,6 +90,12 @@ vendor.city == "Madurai"`, "Reading through a lookup", "text"),
       note("'Active = No must not appear in lookups' → AI Assistant → New workflow → it creates a lookup filter (not a script) on every lookup pointing to that form.", "tip"),
     ] },
     { id: "fields-subform", title: "Subforms (line items)", blocks: [
+      p("When you add a Subform field the builder asks how rows should be stored:"),
+      table(["Mode", "Columns", "Where rows live", "Use when"], [
+        ["Blank subform", "You define them (Item, Qty, Rate, Amount…)", "Inside the parent record only", "Simple line items that never need their own reports"],
+        ["Use an existing form", "Picked from that form's fields", "Each row is also a real record of the child form, with a read-only lookup pointing at the parent (added automatically)", "You want to report on the rows themselves (Invoice Items report, item-wise sales) or enter them from several parents"],
+      ]),
+      note("Existing-form mode: open the child form's report to see every row and the parent it was entered from (the auto lookup). Editing the parent updates/creates/deletes the child records to match; a hard delete of the parent removes its child rows.", "tip"),
       table(["Setting", "Effect"], [
         ["Columns", "Any field type per column; lookups with auto-fill (Product → Rate) work per row"],
         ["Row formula", "amount = quantity * rate — recalculated per row while typing"],
@@ -328,8 +334,12 @@ if (input.grand_total > 100000 && input.status !== "Pending Approval") {
   // ── Users & governance ─────────────────────────────────────────────────────
   { id: "users", title: "Users, sharing & publishing", icon: "shield", summary: "Roles, members, share links, versions, audit, health.", topics: [
     { id: "users-roles", title: "Roles (designations)", blocks: [
-      table(["Permission", "Meaning"], [["Form: view / create / edit / delete / print / export / import", "Per form; unchecked = no access (form hidden from the menu)"], ["Record scope: all / own", "Own = only records the user created"], ["Field rules: hidden / read-only", "Per field for that role, in forms and reports"], ["Report: view / print / export", "Per report"], ["Page: view", "Per dashboard page"], ["Admin role", "Everything, including managing members (owner only can edit the app)"]]),
+      table(["Permission", "Meaning"], [["Form: view / create / edit / delete / print / export / import", "Per form; unchecked = no access (form hidden from the menu)"], ["Record scope: all / own", "Own = only records the user created"], ["Field rules: hidden / read-only", "Per field for that role, in forms and reports"], ["Report: view / print / export", "Per report"], ["Page: view", "Per dashboard page"], ["Admin role", "Everything in the live app, including managing members (builder access is separate — see below)"]]),
       steps(["Users tab → Add designation (presets: full / view-only / none) → tick permissions.", "Add member → email + designation. The member signs in with Google or email; unknown emails see 'This email is not configured'.", "Share → copy the app link. Public mode (Settings → sharing) allows read-only access without sign-in."]),
+    ] },
+    { id: "users-builder-access", title: "Builder access (collaborators)", blocks: [
+      list(["Members use the live app; builder collaborators also open the app in the builder — forms, reports, workflows, pages, members, publish.", "Share → Builder access → email + Give builder access. The person signs in and lands on /builder with only the apps they were given.", "Collaborators cannot delete the app, change its owner, manage the collaborator list, create new apps or save templates — those stay with the owner.", "Remove access any time from the same list; the change applies on their next page load."]),
+      note("Builder access is per app. The same email can be a member of one app and a builder of another.", "tip"),
     ] },
     { id: "users-publish", title: "Publish, versions, audit, health", blocks: [
       list(["Publish creates a numbered version snapshot; members switch to it instantly.", "Versions tab → view any version → Roll back (creates a new draft from it).", "Audit tab → who created/updated/deleted what, with before/after values; exportable.", "Health tab → errors/warnings/suggestions with Auto-fix (ledger mapping, missing view settings) and links to the exact form/report.", "Settings → export app JSON, import, duplicate, save as template, menu sections & icons, trash, recent records."]),

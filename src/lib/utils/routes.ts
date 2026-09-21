@@ -21,6 +21,7 @@ export type BuilderTab =
   | "forms"
   | "reports"
   | "workflows"
+  | "print"
   | "pages"
   | "relationships"
   | "users"

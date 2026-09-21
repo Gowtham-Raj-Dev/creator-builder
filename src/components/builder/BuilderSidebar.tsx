@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAppBuilder } from "@/context/AppBuilderContext";
-import { FileText, TableProperties, LayoutTemplate, Zap, Network, Settings, Users, Menu as MenuIcon, History, ScrollText, HeartPulse, Sparkles } from "lucide-react";
+import { FileText, TableProperties, LayoutTemplate, Zap, Network, Settings, Users, Menu as MenuIcon, History, ScrollText, HeartPulse, Sparkles, Printer } from "lucide-react";
 import { getBuilderUrl, BuilderTab } from "@/lib/utils/routes";
 
 export const BuilderSidebar: React.FC = () => {
@@ -20,6 +20,7 @@ export const BuilderSidebar: React.FC = () => {
       { tab: "reports", label: "Reports", icon: <TableProperties className="w-4 h-4" />, count: currentApp.reports.length },
       { tab: "pages", label: "Pages & Dashboards", icon: <LayoutTemplate className="w-4 h-4" />, count: currentApp.pages.length },
       { tab: "workflows", label: "Workflows", icon: <Zap className="w-4 h-4" />, count: currentApp.workflows.length },
+      { tab: "print", label: "Print designs", icon: <Printer className="w-4 h-4" />, count: (currentApp.printTemplates || []).length },
     ] },
     { title: "Access", items: [
       { tab: "users", label: "Users & Roles", icon: <Users className="w-4 h-4" />, count: currentApp.members.length },

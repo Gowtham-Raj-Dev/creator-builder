@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/FormControls";
 import { hasActiveKey, setActiveAiApp } from "@/lib/ai/claude";
 import { patchReportWithAi, patchFormWithAi, ReportPatchProposal, FormPatchProposal } from "@/lib/ai/generators";
+import { withParentLinkColumns } from "@/lib/engine/subformLink";
 import { Sparkles, Check, AlertTriangle, Wand2 } from "lucide-react";
 
 type Props =
@@ -35,7 +36,7 @@ const EXAMPLES: Record<Props["kind"], string[]> = {
 /** "Edit with AI" for an existing report or form: describe the change, preview, apply. */
 export const AiFixModal: React.FC<Props> = (props) => {
   const { isOpen, onClose, kind, entity, initialPrompt } = props;
-  const { currentApp, updateReport, updateForm } = useAppBuilder();
+  const { currentApp, updateReport, updateForm, updateCurrentApp } = useAppBuilder();
   const { showToast } = useToast();
   const [prompt, setPrompt] = useState(initialPrompt || "");
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,7 @@ export const AiFixModal: React.FC<Props> = (props) => {
   };
   const apply = () => {
     if (kind === "report" && reportResult) { updateReport(entity.id, reportResult.patch); showToast("Report updated by AI", "success"); }
-    if (kind === "form" && formResult) { const { id, ...rest } = formResult.form; void id; updateForm(entity.id, rest); showToast("Form updated by AI", "success"); }
+    if (kind === "form" && formResult) { const { id, ...rest } = formResult.form; void id; updateForm(entity.id, rest); for (const u of formResult.updatedForms || []) { const { id: uid, ...urest } = u; updateForm(uid, urest); } setTimeout(() => updateCurrentApp((prev) => withParentLinkColumns(prev)), 0); showToast("Form updated by AI", "success"); }
     onClose();
   };
   const result = reportResult || formResult;

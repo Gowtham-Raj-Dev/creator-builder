@@ -7,6 +7,7 @@ import { generateId } from "@/lib/utils/idGenerator";
 import { resolveLookupDisplay } from "@/lib/engine/lookupEngine";
 import { generateNextAutoNumber } from "@/lib/engine/autoNumberEngine";
 import { computeRollup } from "@/lib/engine/rollupEngine";
+import { isLinkedSubform, planChildSync, CHILD_ID_KEY } from "@/lib/engine/subformLink";
 import { buildFormulaContext, evaluateFormula, coerceFormulaResult } from "@/lib/engine/formulaEngine";
 import { formatCurrency, formatDate } from "@/lib/utils/formatters";
 import { DataOperation, WorkflowResult } from "@/lib/engine/workflowEngine";
@@ -71,6 +72,14 @@ function writeLocalReportPrefs(reportId: string, patch: LocalReportPrefs) {
   } catch { /* ignore */ }
 }
 
+/** Merge locally written records into a form's list without ever holding the same id twice (Firestore's local snapshot may already contain them). */
+function mergeRecords(prev: RecordDefinition[] | undefined, upserts: RecordDefinition[], deleteIds: string[] = []): RecordDefinition[] {
+  const byId = new Map<string, RecordDefinition>();
+  for (const r of upserts) byId.set(r.id, r);
+  const rest = (prev || []).filter((r) => !byId.has(r.id) && !deleteIds.includes(r.id));
+  return [...upserts, ...rest];
+}
+
 function diffRecords(before: Record<string, any>, after: Record<string, any>) {
   const changes: Record<string, { from: any; to: any }> = {};
   const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
@@ -95,6 +104,8 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
   const subsRef = useRef<Array<() => void>>([]);
 
   const permissions = useMemo(() => computePermissions(draftApp || app, user?.email), [draftApp, app, user?.email]);
+  // owners AND builder collaborators see the draft (unpublished) app by default and may persist report settings
+  const canBuildApp = useCallback((a: AppDefinition) => computePermissions(a, user?.email).canEditBuilder, [user?.email]);
 
   const resolveEffectiveApp = useCallback(
     async (draft: AppDefinition, owner: boolean, preview: boolean): Promise<AppDefinition> => {
@@ -118,7 +129,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         const loaded = await storageService.getApp(linkName, { email: user?.email, isOwner });
         if (!loaded) { setApp(null); setDraftApp(null); setNotFound(true); return false; }
         setDraftApp(loaded);
-        const effective = await resolveEffectiveApp(loaded, isOwner, isDraftPreview);
+        const effective = await resolveEffectiveApp(loaded, canBuildApp(loaded), isDraftPreview);
         setApp(effective);
         return true;
       } catch (err) {
@@ -129,7 +140,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         setLoading(false);
       }
     },
-    [user?.email, isOwner, isDraftPreview, resolveEffectiveApp]
+    [user?.email, isOwner, isDraftPreview, resolveEffectiveApp, canBuildApp]
   );
 
   useEffect(() => {
@@ -146,7 +157,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
     const appSub = storageService.subscribeApp(app.id, async (remote) => {
       if (!remote) return;
       setDraftApp(remote);
-      const eff = await resolveEffectiveApp(remote, isOwner, isDraftPreview);
+      const eff = await resolveEffectiveApp(remote, canBuildApp(remote), isDraftPreview);
       setApp(eff);
     });
     subsRef.current.push(appSub);
@@ -221,6 +232,49 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
     return out;
   };
 
+  /**
+   * Subforms backed by an existing form: mirror the parent's rows into real child records
+   * (create / update / delete) and stamp the child ids back onto the rows. Returns the rows with ids.
+   */
+  const syncLinkedSubforms = useCallback(
+    async (form: FormDefinition, parentId: string, data: Record<string, any>, opts: { deleteAll?: boolean } = {}): Promise<Record<string, any>> => {
+      if (!app) return data;
+      const out = { ...data };
+      for (const field of form.fields) {
+        if (field.type !== "subform" || !isLinkedSubform(field.subform)) continue;
+        const cfg = field.subform;
+        const target = app.forms.find((f) => f.id === cfg.targetFormId);
+        if (!target) continue;
+        const children = recordsMap[cfg.targetFormId] || [];
+        const rows: any[] = opts.deleteAll ? [] : Array.isArray(out[field.id]) ? out[field.id] : [];
+        const plan = planChildSync(cfg, parentId, rows, children);
+        const nextRows = rows.map((r) => ({ ...r }));
+        const created: RecordDefinition[] = [];
+        const updated: RecordDefinition[] = [];
+        for (const c of plan.creates) {
+          const rec: RecordDefinition = { id: generateId("rec"), appId: app.id, formId: target.id, data: c.data, createdAt: now(), updatedAt: now(), createdBy: user?.email, createdByName: user?.name, updatedBy: user?.email };
+          for (const f of target.fields) if (f.type === "autonumber" && f.autonumber && !rec.data[f.id]) rec.data[f.id] = generateNextAutoNumber(f.autonumber, [...children, ...created], f.id);
+          await storageService.saveRecord(app.id, target.id, rec);
+          created.push(rec);
+          nextRows[c.rowIndex][CHILD_ID_KEY] = rec.id;
+        }
+        for (const u of plan.updates) {
+          const cur = children.find((r) => r.id === u.id);
+          if (!cur) continue;
+          const rec: RecordDefinition = { ...cur, data: { ...cur.data, ...u.data }, updatedAt: now(), updatedBy: user?.email };
+          await storageService.saveRecord(app.id, target.id, rec);
+          updated.push(rec);
+          nextRows[u.rowIndex][CHILD_ID_KEY] = u.id;
+        }
+        for (const id of plan.deletes) await storageService.deleteRecord(app.id, target.id, id, { hard: true, by: user?.email });
+        setRecordsMap((prev) => ({ ...prev, [target.id]: mergeRecords(prev[target.id], [...created, ...updated], plan.deletes) }));
+        out[field.id] = nextRows;
+      }
+      return out;
+    },
+    [app, recordsMap, user]
+  );
+
   const createRecord = useCallback(
     async (formId: string, data: Record<string, any>, opts?: { silent?: boolean }) => {
       if (!app) return null;
@@ -234,8 +288,9 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
       }
       const rec: RecordDefinition = { id: generateId("rec"), appId: app.id, formId, data: populated, createdAt: now(), updatedAt: now(), createdBy: user?.email, createdByName: user?.name, updatedBy: user?.email };
       try {
+        rec.data = await syncLinkedSubforms(form, rec.id, rec.data); // child records first, so rows carry their ids
         await storageService.saveRecord(app.id, formId, rec);
-        setRecordsMap((prev) => ({ ...prev, [formId]: [rec, ...(prev[formId] || []).filter((r) => r.id !== rec.id)] }));
+        setRecordsMap((prev) => ({ ...prev, [formId]: mergeRecords(prev[formId], [rec]) }));
         auditRecord("created", form, rec);
         if (!opts?.silent) showToast(form.successMessage || "Record created successfully", "success");
         return rec;
@@ -245,7 +300,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         return null;
       }
     },
-    [app, recordsMap, showToast, user, permissions, auditRecord]
+    [app, recordsMap, showToast, user, permissions, auditRecord, syncLinkedSubforms]
   );
 
   const updateRecord = useCallback(
@@ -255,7 +310,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
       const current = recordsMap[formId]?.find((r) => r.id === recordId);
       if (!form || !current) return false;
       if (!permissions.form(formId).edit) { showToast("You don't have permission to edit this record", "error"); return false; }
-      const nextData = stripComputed(form, { ...current.data, ...data });
+      const nextData = await syncLinkedSubforms(form, recordId, stripComputed(form, { ...current.data, ...data }));
       const changes = diffRecords(current.data, nextData);
       const history = [...(current.history || []).slice(-19), { at: now(), by: user?.email || "", changes }];
       const updated: RecordDefinition = { ...current, data: nextData, updatedAt: now(), updatedBy: user?.email, history };
@@ -271,7 +326,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         return false;
       }
     },
-    [app, recordsMap, showToast, user, permissions, auditRecord]
+    [app, recordsMap, showToast, user, permissions, auditRecord, syncLinkedSubforms]
   );
 
   const deleteRecord = useCallback(
@@ -281,6 +336,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
       if (!form || !permissions.form(formId).delete) { showToast("You don't have permission to delete", "error"); return false; }
       const soft = app.settings?.enableTrash !== false;
       try {
+        if (!soft) await syncLinkedSubforms(form, recordId, {}, { deleteAll: true }); // linked child rows go with the parent
         await storageService.deleteRecord(app.id, formId, recordId, { hard: !soft, by: user?.email });
         setRecordsMap((prev) => ({ ...prev, [formId]: soft ? (prev[formId] || []).map((r) => (r.id === recordId ? { ...r, deleted: true, deletedAt: now(), deletedBy: user?.email } : r)) : (prev[formId] || []).filter((r) => r.id !== recordId) }));
         const rec = recordsMap[formId]?.find((r) => r.id === recordId);
@@ -293,7 +349,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
         return false;
       }
     },
-    [app, showToast, permissions, user, recordsMap, auditRecord]
+    [app, showToast, permissions, user, recordsMap, auditRecord, syncLinkedSubforms]
   );
 
   const deleteRecords = useCallback(
@@ -386,7 +442,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
             const rec: RecordDefinition = { id: generateId("rec"), appId: app.id, formId: op.formId, data: op.data || {}, createdAt: now(), updatedAt: now(), createdBy: user?.email, updatedBy: user?.email };
             for (const field of form.fields) if (field.type === "autonumber" && field.autonumber && !rec.data[field.id]) rec.data[field.id] = generateNextAutoNumber(field.autonumber, recordsMap[op.formId] || [], field.id);
             await storageService.saveRecord(app.id, op.formId, rec);
-            setRecordsMap((prev) => ({ ...prev, [op.formId]: [rec, ...(prev[op.formId] || [])] }));
+            setRecordsMap((prev) => ({ ...prev, [op.formId]: mergeRecords(prev[op.formId], [rec]) }));
           } else if (op.type === "update" || op.type === "increment") {
             const current = (recordsMap[op.formId] || []).find((r) => r.id === op.recordId) || (await storageService.getRecord(app.id, op.formId, op.recordId!));
             if (!current) continue;
@@ -497,7 +553,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
   const updateReportSettings = useCallback(
     async (reportId: string, patch: Partial<Pick<ReportDefinition, "reportType" | "columns">>) => {
       const apply = (prev: AppDefinition | null) => (prev ? { ...prev, reports: prev.reports.map((r) => (r.id === reportId ? { ...r, ...patch } : r)) } : prev);
-      if (!draftApp || !permissions.isOwner) {
+      if (!draftApp || !permissions.canEditBuilder) {
         // members can't change the app definition: remember the preference in this browser only
         writeLocalReportPrefs(reportId, patch);
         setApp(apply);
@@ -508,7 +564,7 @@ export const LiveAppProvider: React.FC<{ appLinkName: string; children: React.Re
       setApp(apply);
       await storageService.saveApp(updated);
     },
-    [draftApp, permissions.isOwner]
+    [draftApp, permissions.canEditBuilder]
   );
   const updateReportColumns = useCallback(
     (reportId: string, columns: ReportColumnConfig[]) => updateReportSettings(reportId, { columns }),

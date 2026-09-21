@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import React, { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { Layers, Mail, Lock, User, ShieldAlert, ArrowRight, Loader2, Sparkles, Database, Workflow, LayoutDashboard } from "lucide-react";
@@ -46,9 +47,7 @@ export const LoginScreen: React.FC<{ title?: string; subtitle?: string }> = ({ t
             "radial-gradient(60% 50% at 20% 20%, rgba(37,99,235,.45) 0%, transparent 60%), radial-gradient(50% 50% at 90% 80%, rgba(124,58,237,.4) 0%, transparent 60%), radial-gradient(40% 40% at 70% 20%, rgba(16,185,129,.25) 0%, transparent 60%)",
         }} />
         <div className="relative flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/15 backdrop-blur flex items-center justify-center">
-            <Layers className="w-5 h-5" />
-          </div>
+          <BrandLogo size={40} className="rounded-xl shadow-lg" />
           <div>
             <div className="text-sm font-bold tracking-tight">YourBuilder</div>
             <div className="text-[11px] text-white/60">Low-code application platform</div>
@@ -86,9 +85,7 @@ export const LoginScreen: React.FC<{ title?: string; subtitle?: string }> = ({ t
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
           <div className="lg:hidden flex items-center gap-2.5 mb-8">
-            <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white">
-              <Layers className="w-5 h-5" />
-            </div>
+            <BrandLogo size={36} />
             <span className="text-sm font-bold text-slate-900">YourBuilder</span>
           </div>
 

@@ -1,23 +1,25 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAppBuilder } from "@/context/AppBuilderContext";
 import { useToast } from "@/context/ToastContext";
 import { ReportDefinition } from "@/types/schema";
 import { Button } from "@/components/ui/Button";
-import { Input, Select, Textarea, Tabs, Badge } from "@/components/ui/FormControls";
+import { Input, Select, Textarea, Tabs, Badge, Toggle } from "@/components/ui/FormControls";
 import { createDefaultRole } from "@/lib/auth/permissions";
 import { generateId } from "@/lib/utils/idGenerator";
 import { getAiSettings, getGlobalAiSettings, getAppAiOverride, saveAiSettings, saveAppAiOverride, setActiveAiApp, hasActiveKey, listGeminiModels, generateAppFromDescription, writeFormula, nlQuery, askAssistant, GeneratedApp, AiSettings, AiProvider } from "@/lib/ai/claude";
 import { getLiveAppUrl, getBuilderUrl } from "@/lib/utils/routes";
 import { generateSampleData, SampleGenResult } from "@/lib/ai/sampleData";
-import { AiNewReport, AiNewForm, AiNewWorkflow } from "./AiBuilders";
+import { answerDataQuestion, DataAnswer } from "@/lib/ai/askData";
+import { withParentLinkColumns } from "@/lib/engine/subformLink";
+import { AiNewReport, AiNewForm, AiNewWorkflow, AiNewDashboard } from "./AiBuilders";
 import { storageService } from "@/lib/storage/firestoreProvider";
 import { useAuth } from "@/context/AuthContext";
 import { Checkbox } from "@/components/ui/FormControls";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Sparkles, Wand2, Sigma, Search, MessageSquare, KeyRound, CheckCircle2, AlertTriangle, ArrowRight, Loader2, Database, Trash2, FileText, TableProperties, Zap } from "lucide-react";
+import { Sparkles, Wand2, Sigma, Search, MessageSquare, KeyRound, CheckCircle2, AlertTriangle, ArrowRight, Loader2, Database, Trash2, FileText, TableProperties, Zap, LayoutDashboard } from "lucide-react";
 
 /** Gemini models selectable in settings. Quotas differ per model, so switching models is the quickest way around a 429. */
 const GEMINI_MODELS: Array<{ id: string; label: string; group: string }> = [
@@ -35,7 +37,12 @@ export const AIAssistantView: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
   const router = useRouter();
-  const [tab, setTab] = useState("generate");
+  // deep link from "Discuss with AI": ?tab=ai&aiTab=newworkflow&prompt=…&formId=…
+  const searchParams = useSearchParams();
+  const linkTab = searchParams.get("aiTab") || "";
+  const linkPrompt = searchParams.get("prompt") || "";
+  const linkFormId = searchParams.get("formId") || "";
+  const [tab, setTab] = useState(["generate", "newform", "newreport", "newworkflow", "newdashboard", "formula", "query", "sample", "chat", "settings"].includes(linkTab) ? linkTab : "generate");
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null); // the settings being edited (global or app)
   const [keys, setKeys] = useState({ anthropic: "", gemini: "", groq: "" });
@@ -57,15 +64,16 @@ export const AIAssistantView: React.FC = () => {
   const [error, setError] = useState("");
 
   // generate
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(linkTab === "generate" ? linkPrompt : "");
+  const [suggestReports, setSuggestReports] = useState(false);
   const [generated, setGenerated] = useState<GeneratedApp | null>(null);
   // formula
   const [formulaFormId, setFormulaFormId] = useState("");
-  const [formulaAsk, setFormulaAsk] = useState("");
+  const [formulaAsk, setFormulaAsk] = useState(linkTab === "formula" ? linkPrompt : "");
   const [formulaOut, setFormulaOut] = useState<{ expression: string; explanation: string } | null>(null);
   // query
-  const [question, setQuestion] = useState("");
-  const [queryOut, setQueryOut] = useState<any>(null);
+  const [question, setQuestion] = useState(linkTab === "query" ? linkPrompt : "");
+  const [queryOut, setQueryOut] = useState<DataAnswer | null>(null);
   // sample data
   const [sampleForms, setSampleForms] = useState<string[]>([]);
   const [sampleCount, setSampleCount] = useState(10);
@@ -98,10 +106,10 @@ export const AIAssistantView: React.FC = () => {
   const applyGenerated = () => {
     if (!generated) return;
     updateCurrentApp((prev) => {
-      const next = { ...prev, forms: [...prev.forms, ...generated.forms], reports: [...prev.reports, ...generated.reports], workflows: [...prev.workflows, ...generated.workflows] };
+      const next = { ...prev, forms: [...prev.forms.map((f) => (generated.updatedForms || []).find((u) => u.id === f.id) || f), ...generated.forms], reports: [...prev.reports, ...generated.reports], workflows: [...prev.workflows, ...generated.workflows] };
       const roles = [...prev.roles];
       for (const r of generated.roles || []) if (!roles.some((x) => x.name.toLowerCase() === r.name.toLowerCase())) roles.push(createDefaultRole(r.name, next, r.preset || "view"));
-      return { ...next, roles };
+      return withParentLinkColumns({ ...next, roles });
     });
     if (generated.dashboard && (generated.dashboard.kpis?.length || generated.dashboard.charts?.length)) {
       const page = createPage("Dashboard", "Generated by AI");
@@ -120,10 +128,10 @@ export const AIAssistantView: React.FC = () => {
 
   return (
     <div className="flex-1 bg-slate-100/60 h-full overflow-y-auto p-6 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-4">
+      <div className="max-w-7xl mx-auto space-y-4">
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs space-y-4">
           <div><h1 className="text-lg font-bold text-slate-900 flex items-center gap-2"><Sparkles className="w-5 h-5 text-amber-500" /> AI Assistant</h1><p className="text-xs text-slate-500 mt-0.5">Describe an app to generate forms, reports, workflows and a dashboard. Write formulas and query data in plain English. Provider: <span className="font-semibold">{effective?.aiProvider === "gemini" ? `Google Gemini (${effective.geminiModel})` : effective?.aiProvider === "groq" ? `Groq (${effective.groqModel})` : "Anthropic Claude (claude-opus-5)"}</span> · <span className={effective?.source === "app" ? "text-indigo-700 font-semibold" : "text-slate-500"}>{effective?.source === "app" ? "app-specific keys" : "global platform keys"}</span>.</p></div>
-          <Tabs className="flex-wrap" active={tab} onChange={setTab} tabs={[{ id: "generate", label: "Generate app", icon: <Wand2 className="w-3.5 h-3.5" /> }, { id: "newform", label: "New form", icon: <FileText className="w-3.5 h-3.5" /> }, { id: "newreport", label: "New report", icon: <TableProperties className="w-3.5 h-3.5" /> }, { id: "newworkflow", label: "New workflow", icon: <Zap className="w-3.5 h-3.5" /> }, { id: "formula", label: "Formula writer", icon: <Sigma className="w-3.5 h-3.5" /> }, { id: "query", label: "Ask data", icon: <Search className="w-3.5 h-3.5" /> }, { id: "sample", label: "Sample data", icon: <Database className="w-3.5 h-3.5" /> }, { id: "chat", label: "Help", icon: <MessageSquare className="w-3.5 h-3.5" /> }, { id: "settings", label: "Provider & keys", icon: <KeyRound className="w-3.5 h-3.5" /> }]} />
+          <Tabs className="w-full overflow-x-auto whitespace-nowrap [&>button]:shrink-0" size="sm" active={tab} onChange={setTab} tabs={[{ id: "generate", label: "Generate app", icon: <Wand2 className="w-3.5 h-3.5" /> }, { id: "newform", label: "New form", icon: <FileText className="w-3.5 h-3.5" /> }, { id: "newreport", label: "New report", icon: <TableProperties className="w-3.5 h-3.5" /> }, { id: "newworkflow", label: "New workflow", icon: <Zap className="w-3.5 h-3.5" /> }, { id: "newdashboard", label: "New dashboard", icon: <LayoutDashboard className="w-3.5 h-3.5" /> }, { id: "formula", label: "Formula writer", icon: <Sigma className="w-3.5 h-3.5" /> }, { id: "query", label: "Ask data", icon: <Search className="w-3.5 h-3.5" /> }, { id: "sample", label: "Sample data", icon: <Database className="w-3.5 h-3.5" /> }, { id: "chat", label: "Help", icon: <MessageSquare className="w-3.5 h-3.5" /> }, { id: "settings", label: "Provider & keys", icon: <KeyRound className="w-3.5 h-3.5" /> }]} />
         </div>
 
         {hasKey === false && tab !== "settings" && (
@@ -192,7 +200,7 @@ export const AIAssistantView: React.FC = () => {
           <div className="space-y-4">
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs space-y-3">
               <Textarea label="Describe your application" rows={5} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. A sweet shop purchase tracker: maintain Items (with unit, rate, opening stock, minimum level), Vendors, Purchase entries with line items (item, qty, rate, amount, total), daily Usage entries, and a stock ledger showing balance per item with low-stock alerts. Store manager can do everything; staff can only add usage." />
-              <div className="flex items-center gap-2"><Button loading={busy} disabled={!description.trim() || !hasKey} onClick={() => run(async () => { setGenerated(await generateAppFromDescription(description, currentApp, (t) => setStream((s) => s + t))); })} icon={<Wand2 className="w-3.5 h-3.5" />}>Generate</Button><span className="text-[11px] text-slate-400">Nothing is added until you click Apply.</span></div>
+              <div className="flex items-center gap-3 flex-wrap"><Button loading={busy} disabled={!description.trim() || !hasKey} onClick={() => run(async () => { setGenerated(await generateAppFromDescription(description, currentApp, (t) => setStream((s) => s + t), { suggestReports })); })} icon={<Wand2 className="w-3.5 h-3.5" />}>Generate</Button><Toggle size="sm" checked={suggestReports} onChange={setSuggestReports} label="Also suggest extra reports & a dashboard" /><span className="text-[11px] text-slate-400">Off = each form gets only its default table report. Nothing is added until you click Apply.</span></div>
               {busy && stream && <pre className="text-[10px] font-mono bg-slate-900 text-emerald-200 rounded-lg p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{stream.slice(-1500)}</pre>}
             </div>
             {generated && (
@@ -212,9 +220,10 @@ export const AIAssistantView: React.FC = () => {
           </div>
         )}
 
-        {tab === "newform" && <AiNewForm disabled={!hasKey} />}
-        {tab === "newreport" && <AiNewReport disabled={!hasKey} />}
-        {tab === "newworkflow" && <AiNewWorkflow disabled={!hasKey} />}
+        {tab === "newform" && <AiNewForm disabled={!hasKey} initialPrompt={linkTab === "newform" ? linkPrompt : undefined} />}
+        {tab === "newreport" && <AiNewReport disabled={!hasKey} initialPrompt={linkTab === "newreport" ? linkPrompt : undefined} initialFormId={linkTab === "newreport" ? linkFormId : undefined} />}
+        {tab === "newdashboard" && <AiNewDashboard disabled={!hasKey} initialPrompt={linkTab === "newdashboard" ? linkPrompt : undefined} />}
+        {tab === "newworkflow" && <AiNewWorkflow disabled={!hasKey} initialPrompt={linkTab === "newworkflow" ? linkPrompt : undefined} initialFormId={linkTab === "newworkflow" ? linkFormId : undefined} />}
 
         {tab === "formula" && (
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs space-y-3">
@@ -229,14 +238,28 @@ export const AIAssistantView: React.FC = () => {
 
         {tab === "query" && (
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs space-y-3">
-            <Input label="Ask a question about your data" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. last month sugar purchases vendor-wise" onKeyDown={(e) => e.key === "Enter" && question.trim() && run(async () => setQueryOut(await nlQuery(question, currentApp)))} />
-            <Button loading={busy} disabled={!question.trim() || !hasKey} onClick={() => run(async () => setQueryOut(await nlQuery(question, currentApp)))} icon={<Search className="w-3.5 h-3.5" />}>Build report</Button>
-            {queryOut && (() => { const form = currentApp.forms.find((f) => f.id === queryOut.formId); const rep = form && currentApp.reports.find((r) => r.sourceFormId === form.id && r.reportType !== "ledger"); return (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2 text-xs">
-                <p className="text-slate-700">{queryOut.explanation}</p>
-                <div className="font-mono text-[11px] text-slate-500">{form?.name} · {(queryOut.filters || []).length} filter(s){queryOut.groupBy ? ` · group by ${form?.fields.find((f) => f.id === queryOut.groupBy)?.label}` : ""}</div>
-                {form && rep && <Button size="sm" onClick={() => { const rest = { ...rep }; const name = `AI: ${question.slice(0, 40)}`; const newRep: ReportDefinition = { ...rest, id: generateId("rep"), name, linkName: `ai_${Date.now().toString(36)}`, reportType: (queryOut.view || "table") as any, filterGroups: [{ id: "g1", logic: "AND" as const, filters: (queryOut.filters || []).map((f: any) => ({ ...f, id: generateId("flt") })) }], groupByFieldId: queryOut.groupBy || undefined, groupAggregates: queryOut.field && queryOut.aggregate ? [{ fieldId: queryOut.field, aggregate: queryOut.aggregate }] : undefined, showInMenu: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; updateCurrentApp((prev) => ({ ...prev, reports: [...prev.reports, newRep] })); window.open(getLiveAppUrl(currentApp.linkName, { report: newRep.linkName }), "_blank"); }} icon={<ArrowRight className="w-3.5 h-3.5" />}>Save as report & open</Button>}
-              </div>); })()}
+            <div><h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2"><Search className="w-4 h-4 text-blue-600" /> Ask a question about your data</h3><p className="text-xs text-slate-500">The answer is computed from your real records (the AI only interprets the question and words the reply) — nothing is created or stored.</p></div>
+            <div className="flex gap-2">
+              <div className="flex-1"><Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. How many sales invoices are there? · Total sales this month · Unpaid invoices by customer" onKeyDown={(e) => e.key === "Enter" && question.trim() && run(async () => setQueryOut(await answerDataQuestion(question, currentApp, loadRecords)))} /></div>
+              <Button loading={busy} disabled={!question.trim() || !hasKey} onClick={() => run(async () => setQueryOut(await answerDataQuestion(question, currentApp, loadRecords)))} icon={<Search className="w-3.5 h-3.5" />}>Ask</Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">{["How many sales invoices are there?", "Total sales this month", "Unpaid invoices by customer", "Top 5 products by quantity sold", "Customers added in the last 30 days"].map((q) => <button key={q} type="button" onClick={() => setQuestion(q)} className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:text-blue-700">{q}</button>)}</div>
+            {queryOut && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3 text-xs">
+                <p className="text-sm text-slate-900 leading-relaxed">{queryOut.narrative}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="default">{queryOut.form.name}</Badge>
+                  <Badge variant="primary">{queryOut.count} of {queryOut.total} records</Badge>
+                  {queryOut.aggregate && <Badge variant="indigo">{queryOut.aggregate.label} {queryOut.aggregate.fieldLabel}: {queryOut.aggregate.value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</Badge>}
+                  {queryOut.filters.map((f: any, i: number) => <Badge key={i} variant="default">{f.label} {f.operator} {f.value}</Badge>)}
+                </div>
+                {queryOut.groups?.length ? (
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="w-full text-[11px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="text-left px-3 py-1.5">Group</th><th className="text-right px-3 py-1.5">Records</th>{queryOut.aggregate && <th className="text-right px-3 py-1.5">{queryOut.aggregate.label} {queryOut.aggregate.fieldLabel}</th>}</tr></thead><tbody className="divide-y divide-slate-100">{queryOut.groups.map((g: any) => <tr key={g.label}><td className="px-3 py-1.5 font-medium">{g.label}</td><td className="px-3 py-1.5 text-right tabular-nums">{g.count}</td>{queryOut.aggregate && <td className="px-3 py-1.5 text-right tabular-nums">{(g.value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</td>}</tr>)}</tbody></table></div>
+                ) : queryOut.sample.length ? (
+                  <details><summary className="cursor-pointer text-slate-500">Show first {queryOut.sample.length} matching record{queryOut.sample.length === 1 ? "" : "s"}</summary><div className="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="w-full text-[11px]"><thead className="bg-slate-50 text-slate-500"><tr>{Object.keys(queryOut.sample[0]).map((h) => <th key={h} className="text-left px-3 py-1.5 whitespace-nowrap">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{queryOut.sample.map((r: any, i: number) => <tr key={i}>{Object.values(r).map((v: any, j) => <td key={j} className="px-3 py-1.5 whitespace-nowrap">{v || "—"}</td>)}</tr>)}</tbody></table></div></details>
+                ) : null}
+              </div>
+            )}
           </div>
         )}
 

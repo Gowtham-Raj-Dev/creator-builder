@@ -32,6 +32,8 @@ export const ReportBuilderView: React.FC<{ reportLinkName?: string }> = ({ repor
   const [newType, setNewType] = useState<ReportType>("table");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  const [listForm, setListForm] = useState(""); // filter the report list by source form
+  const [listSearch, setListSearch] = useState("");
 
   useEffect(() => {
     if (!currentApp) return;
@@ -61,13 +63,18 @@ export const ReportBuilderView: React.FC<{ reportLinkName?: string }> = ({ repor
       {/* list */}
       <div className="w-64 border-r border-slate-200 bg-white flex flex-col shrink-0 min-h-0">
         <div className="p-3 border-b border-slate-100 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Reports ({currentApp.reports.length})</span><Button size="xs" onClick={() => { setNewForm(currentApp.forms[0]?.id || ""); setCreateOpen(true); }} icon={<Plus className="w-3 h-3" />}>New</Button></div>
+        <div className="p-2 border-b border-slate-100 space-y-1.5">
+          <Select size="sm" value={listForm} onChange={(e) => setListForm(e.target.value)}><option value="">All forms ({currentApp.reports.length})</option>{currentApp.forms.map((f) => { const n = currentApp.reports.filter((r) => r.sourceFormId === f.id).length; return <option key={f.id} value={f.id}>{f.name} ({n})</option>; })}</Select>
+          <input value={listSearch} onChange={(e) => setListSearch(e.target.value)} placeholder="Search reports…" className="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/25" />
+        </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-          {currentApp.reports.map((r) => { const f = currentApp.forms.find((x) => x.id === r.sourceFormId); const t = TYPES.find((x) => x.id === (r.reportType || "table")); return (
+          {currentApp.reports.filter((r) => (!listForm || r.sourceFormId === listForm) && (!listSearch.trim() || r.name.toLowerCase().includes(listSearch.trim().toLowerCase()))).map((r) => { const f = currentApp.forms.find((x) => x.id === r.sourceFormId); const t = TYPES.find((x) => x.id === (r.reportType || "table")); return (
             <button key={r.id} onClick={() => setSelectedId(r.id)} className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center gap-2.5 ${selectedId === r.id ? "bg-blue-50 text-blue-800 font-semibold" : "text-slate-700 hover:bg-slate-100"}`}>
               <span className={selectedId === r.id ? "text-blue-600" : "text-slate-400"}>{t?.iconNode}</span>
               <span className="min-w-0"><span className="block truncate">{r.name}</span><span className="block text-[10px] text-slate-400 font-normal truncate">{f?.name || "?"} · {t?.label}</span></span>
             </button>); })}
           {currentApp.reports.length === 0 && <p className="text-[11px] text-slate-400 p-3 text-center">No reports. Create a form first.</p>}
+          {currentApp.reports.length > 0 && !currentApp.reports.some((r) => (!listForm || r.sourceFormId === listForm) && (!listSearch.trim() || r.name.toLowerCase().includes(listSearch.trim().toLowerCase()))) && <p className="text-[11px] text-slate-400 p-3 text-center">No reports match.</p>}
         </div>
       </div>
 

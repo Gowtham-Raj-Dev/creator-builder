@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { AppDefinition, AppMember } from "@/types/schema";
+import { AppDefinition, AppMember, AppCollaborator } from "@/types/schema";
 import { storageService } from "@/lib/storage/firestoreProvider";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { Modal } from "@/components/ui/Modal";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Input, Select, Badge } from "@/components/ui/FormControls";
-import { getShareUrl } from "@/lib/utils/routes";
-import { createDefaultRole } from "@/lib/auth/permissions";
-import { Share2, Copy, Check, Globe, Lock, UserPlus, Trash2, Mail, QrCode } from "lucide-react";
+import { getShareUrl, getBuilderUrl } from "@/lib/utils/routes";
+import { createDefaultRole, computePermissions } from "@/lib/auth/permissions";
+import { Share2, Copy, Check, Globe, Lock, UserPlus, Trash2, Mail, QrCode, Wrench } from "lucide-react";
 
 /**
  * Share an app: copy the live link, toggle public/private, add members with a designation.
@@ -24,8 +24,13 @@ export const ShareModal: React.FC<{ app: AppDefinition; onClose: () => void; onC
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [roleId, setRoleId] = useState(initial.roles[0]?.id || "");
+  const [builderEmail, setBuilderEmail] = useState("");
+  const [builderName, setBuilderName] = useState("");
   const [busy, setBusy] = useState(false);
   const url = getShareUrl(app.linkName);
+  // Only the app owner (or platform owner) may hand out builder access — Firestore rules enforce the same.
+  const isAppOwner = computePermissions(app, user?.email).isOwner;
+  const builders = app.builders || [];
 
   const persist = async (next: AppDefinition) => {
     setBusy(true);
@@ -77,6 +82,28 @@ export const ShareModal: React.FC<{ app: AppDefinition; onClose: () => void; onC
     await persist({ ...app, members, memberEmails: members.filter((x) => x.status !== "disabled").map((x) => x.email) });
   };
 
+  const addBuilder = async () => {
+    const lower = builderEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lower)) return showToast("Enter a valid email", "error");
+    if (lower === (app.ownerEmail || user?.email || "").toLowerCase()) return showToast("That email already owns this app", "warning");
+    if (builders.some((b) => b.email === lower)) return showToast("Already has builder access", "warning");
+    const collaborator: AppCollaborator = { email: lower, name: builderName.trim() || undefined, addedAt: new Date().toISOString(), addedBy: user?.email };
+    const nextBuilders = [...builders, collaborator];
+    await persist({ ...app, builders: nextBuilders, builderEmails: nextBuilders.map((b) => b.email) });
+    if (user) storageService.addAudit({ appId: app.id, type: "member", action: "builder_added", entityType: "builder", entityId: lower, entityName: lower, user: user.email, userName: user.name });
+    const builderUrl = typeof window !== "undefined" ? `${window.location.origin}${getBuilderUrl(app.linkName)}` : getBuilderUrl(app.linkName);
+    storageService.addNotification({ appId: app.id, toEmail: lower, title: `You can now edit ${app.name} in the builder`, body: `${user?.name || "The owner"} gave you builder access. Open the builder to edit forms, reports, workflows and publish.`, link: builderUrl });
+    setBuilderEmail(""); setBuilderName("");
+    showToast(`${lower} can now open the builder`, "success");
+  };
+
+  const removeBuilder = async (email: string) => {
+    const nextBuilders = builders.filter((b) => b.email !== email);
+    await persist({ ...app, builders: nextBuilders, builderEmails: nextBuilders.map((b) => b.email) });
+    if (user) storageService.addAudit({ appId: app.id, type: "member", action: "builder_removed", entityType: "builder", entityId: email, entityName: email, user: user.email, userName: user.name });
+    showToast("Builder access removed", "info");
+  };
+
   const mailto = `mailto:?subject=${encodeURIComponent(`Access to ${app.name}`)}&body=${encodeURIComponent(`Open the app here: ${url}\n\nSign in with the email address that was given access.`)}`;
 
   return (
@@ -111,6 +138,33 @@ export const ShareModal: React.FC<{ app: AppDefinition; onClose: () => void; onC
           </div>
           <p className="text-[11px] text-slate-400">Fine-tune what each designation can see/edit under Builder → Users & Roles.</p>
         </div>
+
+        {/* Builder access */}
+        {isAppOwner && (
+          <div className="space-y-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5"><Wrench className="w-3.5 h-3.5" /> Builder access</div>
+            <p className="text-[11px] text-slate-500">People listed here can open <span className="font-semibold">this app</span> in the builder — edit forms, reports, workflows, pages, members and publish. They cannot delete the app, change its owner or manage this list.</p>
+            <div className="grid grid-cols-1 md:grid-cols-[2fr_1.2fr_auto] gap-2 items-end">
+              <Input size="sm" label="Email" type="email" value={builderEmail} onChange={(e) => setBuilderEmail(e.target.value)} placeholder="developer@company.com" onKeyDown={(e) => e.key === "Enter" && addBuilder()} />
+              <Input size="sm" label="Name (optional)" value={builderName} onChange={(e) => setBuilderName(e.target.value)} placeholder="Priya" />
+              <Button size="sm" variant="outline" onClick={addBuilder} loading={busy} icon={<Wrench className="w-3.5 h-3.5" />}>Give builder access</Button>
+            </div>
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between"><span>Builders ({builders.length})</span><span className="font-normal normal-case">Owner: {app.ownerEmail || user?.email}</span></div>
+              <div className="divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                {builders.length === 0 && <div className="px-4 py-4 text-center text-xs text-slate-400">No builder collaborators. Only the owner can edit this app.</div>}
+                {builders.map((b) => (
+                  <div key={b.email} className="px-4 py-2.5 flex items-center gap-3 text-xs">
+                    <div className="w-7 h-7 rounded-full bg-violet-600 text-white flex items-center justify-center font-bold text-[11px] shrink-0">{(b.name || b.email).charAt(0).toUpperCase()}</div>
+                    <div className="min-w-0 flex-1"><div className="font-semibold text-slate-800 truncate">{b.name || b.email}</div>{b.name && <div className="text-[11px] text-slate-400 truncate">{b.email}</div>}</div>
+                    <Badge variant="purple">Builder</Badge>
+                    <IconButton tone="danger" size="sm" onClick={() => removeBuilder(b.email)} title="Remove builder access"><Trash2 className="w-3.5 h-3.5" /></IconButton>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Members list */}
         <div className="rounded-xl border border-slate-200 overflow-hidden">

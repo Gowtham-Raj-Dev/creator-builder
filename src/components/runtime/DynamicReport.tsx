@@ -8,7 +8,7 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Modal } from "@/components/ui/Modal";
 import { Dropdown } from "@/components/ui/Dropdown";
-import { PrintModal } from "./PrintModal";
+import { LivePrintModal as PrintModal } from "./LivePrintModal";
 import { useReportData } from "./report/useReportData";
 import { FilterGroupsEditor } from "./report/FilterBuilder";
 import { TableView, GridView, KanbanView, CalendarView, SummaryView, PivotView, TimelineView, TrashView } from "./report/views";
@@ -56,7 +56,10 @@ export const DynamicReport: React.FC<DynamicReportProps> = ({ report, form, onAd
 const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, form, onAddRecord, onEditRecord, embedded, initialView, recordFilter, filterNote, ctx }) => {
   const { router, app, trashMap, deleteRecord, deleteRecords, restoreRecord, purgeRecord, duplicateRecord, updateRecord, updateReportColumns, updateReportSettings, permissions } = ctx;
   const data = useReportData(report, form, { recordFilter });
-  const perm = permissions.form(form.id);
+  const rawPerm = permissions.form(form.id);
+  // the Print button appears only when the owner marked a default print design for this form (Builder → Print designs)
+  const hasDesign = Boolean((app?.printTemplates || []).some((t: any) => t.formId === form.id && t.isDefault));
+  const perm = { ...rawPerm, print: rawPerm.print && hasDesign };
   const rperm = permissions.report(report.id);
   const defaultView: ReportType = report.reportType || "table";
   const [view, setView] = useState<ReportType | "trash">((initialView as ReportType) || defaultView);
@@ -196,9 +199,9 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
             <Dropdown
               trigger={<Button variant="outline" size="sm" icon={<MoreHorizontal className="w-3.5 h-3.5" />} />}
               items={[
-                { id: "print", label: "Print report", icon: <Printer className="w-3.5 h-3.5" />, onClick: () => setPrint({ open: true }), disabled: !rperm.print },
+                { id: "print", label: hasDesign ? "Print report" : "Print report (no print design set)", icon: <Printer className="w-3.5 h-3.5" />, onClick: () => setPrint({ open: true }), disabled: !rperm.print || !hasDesign },
                 { id: "csv", label: "Export CSV", icon: <Download className="w-3.5 h-3.5" />, onClick: () => { const { headers, rows } = exportRows(); downloadText(`${report.linkName}.csv`, toCsv(headers, rows)); }, disabled: !rperm.export },
-                { id: "xls", label: "Export Excel", icon: <Download className="w-3.5 h-3.5" />, onClick: () => { const { headers, rows } = exportRows(); downloadExcel(`${report.linkName}.xls`, headers, rows); }, disabled: !rperm.export },
+                { id: "xls", label: "Export Excel", icon: <Download className="w-3.5 h-3.5" />, onClick: () => { const { headers, rows } = exportRows(); downloadExcel(`${report.linkName}.xlsx`, headers, rows, report.name); }, disabled: !rperm.export },
                 { id: "d1", label: "", divider: true },
                 { id: "import", label: "Import CSV", icon: <Upload className="w-3.5 h-3.5" />, onClick: () => setImportOpen(true), disabled: !perm.import },
                 { id: "d2", label: "", divider: true },
@@ -223,7 +226,7 @@ const StandardReport: React.FC<DynamicReportProps & { ctx: any }> = ({ report, f
             </span>
             <div className="ml-auto flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={discardView} icon={<RotateCcw className="w-3.5 h-3.5" />}>Remove changes</Button>
-              <Button size="sm" loading={savingView} onClick={saveView} icon={<Bookmark className="w-3.5 h-3.5" />}>{permissions.isOwner ? "Save as default view" : "Save for me"}</Button>
+              <Button size="sm" loading={savingView} onClick={saveView} icon={<Bookmark className="w-3.5 h-3.5" />}>{permissions.canEditBuilder ? "Save as default view" : "Save for me"}</Button>
             </div>
           </div>
         )}

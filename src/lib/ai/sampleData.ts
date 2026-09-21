@@ -118,7 +118,7 @@ export async function generateSampleData(
       if (batchNo > 0 || Object.keys(generated).length > 0) await new Promise((r) => setTimeout(r, 4000));
       onProgress?.(`Generating ${form.name} (${rows.length + want}/${countPerForm})…`);
       try {
-        const text = await askAi(system.replace(`${countPerForm} objects`, `${want} objects`), userMsg.replace(`${countPerForm} records`, `${want} records${rows.length ? `, different from these already generated names: ${JSON.stringify(rows.slice(-8).map((r) => Object.values(r)[0]))}` : ""}`), undefined, 8000);
+        const text = await askAi(system.replace(`${countPerForm} objects`, `${want} objects`), userMsg.replace(`${countPerForm} records`, `${want} records${rows.length ? `, different from these already generated names: ${JSON.stringify(rows.slice(-8).map((r) => Object.values(r)[0]))}` : ""}`), undefined, 8000, { json: true });
         const parsed = extractJsonLoose(text);
         const got = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.records) ? parsed.records : [];
         if (!got.length) { warnings.push(`${form.name}: model returned no rows in batch ${batchNo + 1}`); break; }

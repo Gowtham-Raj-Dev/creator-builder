@@ -69,7 +69,7 @@ export const SubformField: React.FC<SubformFieldProps> = ({ field, rows = [], on
   };
 
   const deleteRow = (i: number) => emit(rows.filter((_, idx) => idx !== i));
-  const duplicateRow = (i: number) => { const copy = { ...rows[i], id: generateId("row") }; const next = [...rows]; next.splice(i + 1, 0, copy); emit(next); };
+  const duplicateRow = (i: number) => { /* a duplicate must become a new child record */ const copy = { ...rows[i], id: generateId("row"), __childId: undefined }; const next = [...rows]; next.splice(i + 1, 0, copy); emit(next); };
   const moveRow = (i: number, dir: -1 | 1) => { const j = i + dir; if (j < 0 || j >= rows.length) return; const next = [...rows]; [next[i], next[j]] = [next[j], next[i]]; emit(next); };
 
   const handleCellChange = (rowIndex: number, col: SubformColumn, value: any, lookupRecord?: RecordDefinition | RecordDefinition[]) => {

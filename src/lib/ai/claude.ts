@@ -9,6 +9,7 @@ import { SCRIPT_API_DOCS } from "@/lib/engine/workflowEngine";
 import { checkScriptSyntax } from "@/lib/engine/scriptInterpreter";
 import { REPORT_TYPE_IDS, REPORT_TYPES_PROMPT, defaultConfigFor } from "@/lib/engine/reportTypes";
 import { suggestLedgerSource, guessLedgerSources } from "@/lib/engine/healthCheck";
+import { resolveLinkedSubforms } from "@/lib/engine/subformLink";
 
 /**
  * Browser-side AI client (Anthropic Claude, Google Gemini or Groq). The platform runs as a
@@ -101,11 +102,12 @@ export function extractJsonLoose(text: string): any {
   const raw = (fence ? fence[1] : text).trim();
   const oi = raw.indexOf("{"), ai = raw.indexOf("[");
   const start = oi < 0 ? ai : ai < 0 ? oi : Math.min(oi, ai);
-  if (start < 0) throw new Error("No JSON found in the AI response");
+  const snippet = (t: string) => ` The model replied: "${t.replace(/\s+/g, " ").slice(0, 160)}${t.length > 160 ? "…" : ""}"`;
+  if (start < 0) throw new Error(`No JSON found in the AI response.${snippet(raw)}`);
   const isArr = raw[start] === "[";
   const end = isArr ? raw.lastIndexOf("]") : raw.lastIndexOf("}");
   try { return JSON.parse(raw.slice(start, end + 1)); } catch { /* fall through to salvage */ }
-  if (!isArr) throw new Error("Unexpected end of JSON input (response truncated)");
+  if (!isArr) throw new Error(`The AI reply was not complete JSON (truncated or malformed).${snippet(raw)}`);
   // Truncated array: walk elements and keep every complete top-level object.
   const body = raw.slice(start + 1);
   const items: any[] = [];
@@ -117,7 +119,7 @@ export function extractJsonLoose(text: string): any {
     if (ch === "{") { if (depth === 0) objStart = i; depth++; }
     else if (ch === "}") { depth--; if (depth === 0 && objStart >= 0) { try { items.push(JSON.parse(body.slice(objStart, i + 1))); } catch { /* skip broken */ } objStart = -1; } }
   }
-  if (items.length === 0) throw new Error("Unexpected end of JSON input (response truncated)");
+  if (items.length === 0) throw new Error(`The AI reply had no complete JSON items (truncated or malformed).${snippet(raw)}`);
   console.warn(`AI response truncated — salvaged ${items.length} complete item(s).`);
   return items;
 }
@@ -131,12 +133,14 @@ function extractJson(text: string): any {
 }
 
 /** Send a prompt to the configured provider. onDelta receives partial text (Anthropic streams; others deliver once). */
-export async function askAi(system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000): Promise<string> { return ask(system, user, onDelta, maxTokens); }
+export interface AskOptions { json?: boolean } // json → provider is forced into JSON-only output (Gemini responseMimeType / Groq response_format)
 
-async function ask(system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000): Promise<string> {
+export async function askAi(system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, opts: AskOptions = {}): Promise<string> { return ask(system, user, onDelta, maxTokens, opts); }
+
+async function ask(system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, opts: AskOptions = {}): Promise<string> {
   const s = await getAiSettings();
-  if (s.aiProvider === "gemini") return askGemini(s, system, user, onDelta, maxTokens);
-  if (s.aiProvider === "groq") return askGroq(s, system, user, onDelta, maxTokens);
+  if (s.aiProvider === "gemini") return askGemini(s, system, user, onDelta, maxTokens, opts);
+  if (s.aiProvider === "groq") return askGroq(s, system, user, onDelta, maxTokens, opts);
   const c = await client();
   const stream = c.messages.stream({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] });
   if (onDelta) stream.on("text", (t) => onDelta(t));
@@ -165,10 +169,10 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   throw lastErr;
 }
 
-async function askGemini(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000): Promise<string> {
+async function askGemini(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, opts: AskOptions = {}): Promise<string> {
   if (!s.geminiApiKey) throw new Error("No Gemini API key configured. Get one free at aistudio.google.com/apikey and add it under AI Assistant → API key.");
   const model = s.geminiModel || GEMINI_MODEL_DEFAULT;
-  return withRetry(() => askGeminiOnce(s.geminiApiKey!, model, system, user, onDelta, maxTokens), "Gemini");
+  return withRetry(() => askGeminiOnce(s.geminiApiKey!, model, system, user, onDelta, maxTokens, false, opts), "Gemini");
 }
 
 /** Text-capable Gemini models available to this key (exact ids), from the models endpoint. */
@@ -183,9 +187,10 @@ export async function listGeminiModels(apiKey: string): Promise<Array<{ id: stri
     .sort((a: any, b: any) => a.id.localeCompare(b.id));
 }
 
-async function askGeminiOnce(apiKey: string, model: string, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, noThinking = false): Promise<string> {
+async function askGeminiOnce(apiKey: string, model: string, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, noThinking = false, opts: AskOptions = {}): Promise<string> {
   // Thinking eats the output budget; these are structured calls, so keep it minimal per model family.
   const generationConfig: any = { maxOutputTokens: maxTokens, temperature: 0.3 };
+  if (opts.json) generationConfig.responseMimeType = "application/json"; // model must emit valid JSON, no prose/markdown
   if (!noThinking) {
     if (/2\.5/.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
     else if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: "low" };
@@ -200,7 +205,8 @@ async function askGeminiOnce(apiKey: string, model: string, system: string, user
     if (res.status === 429) throw new Error(`Gemini error 429 (free-tier quota / rate limit for ${model}). ${body.match(/retry in [\d.]+s/i)?.[0] || "Wait a minute, or switch to another model (e.g. a Flash-Lite) under Provider & keys — each model has its own quota."}`);
     if (res.status === 404) throw new Error(`Gemini model "${model}" is not available for this API key. Go to AI Assistant → Provider & keys → click "Load exact models for this key" and pick one from that list.`);
     // an unsupported thinkingConfig for this model → retry once without it
-    if (res.status === 400 && !noThinking && /thinking/i.test(body)) return askGeminiOnce(apiKey, model, system, user, onDelta, maxTokens, true);
+    if (res.status === 400 && !noThinking && /thinking/i.test(body)) return askGeminiOnce(apiKey, model, system, user, onDelta, maxTokens, true, opts);
+    if (res.status === 400 && opts.json && /mime|json/i.test(body)) return askGeminiOnce(apiKey, model, system, user, onDelta, maxTokens, noThinking, {});
     throw new Error(`Gemini error ${res.status}: ${body}`);
   }
   const reader = res.body.getReader();
@@ -228,16 +234,16 @@ async function askGeminiOnce(apiKey: string, model: string, system: string, user
   return out;
 }
 
-async function askGroq(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000): Promise<string> {
+async function askGroq(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, opts: AskOptions = {}): Promise<string> {
   if (!s.groqApiKey) throw new Error("No Groq API key configured. Get one free at console.groq.com/keys.");
-  return withRetry(() => askGroqOnce(s, system, user, onDelta, maxTokens), "Groq");
+  return withRetry(() => askGroqOnce(s, system, user, onDelta, maxTokens, opts), "Groq");
 }
 
-async function askGroqOnce(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000): Promise<string> {
+async function askGroqOnce(s: AiSettings, system: string, user: string, onDelta?: (t: string) => void, maxTokens = 16000, opts: AskOptions = {}): Promise<string> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${s.groqApiKey}` },
-    body: JSON.stringify({ model: s.groqModel || GROQ_MODEL_DEFAULT, max_tokens: Math.min(maxTokens, 8192), temperature: 0.3, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+    body: JSON.stringify({ model: s.groqModel || GROQ_MODEL_DEFAULT, max_tokens: Math.min(maxTokens, 8192), temperature: 0.3, ...(opts.json ? { response_format: { type: "json_object" } } : {}), messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error(`Groq error ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const json = await res.json();
@@ -264,6 +270,7 @@ You output ONLY a JSON object (no prose) with this shape:
           { "label": "Quantity", "type": "number" }, { "label": "Rate", "type": "currency" },
           { "label": "Amount", "type": "formula", "formula": "quantity * rate" } ] },
       { "label": "Total", "type": "formula", "formula": "sum(line_items.amount)" },
+      { "label": "Items", "type": "subform", "linkForm": "Invoice Item", "columns": ["Product", "Quantity", "Rate", "Amount"] },
       { "label": "Total Purchased", "type": "rollup", "rollupForm": "Purchase", "rollupField": "Line Items.Quantity", "aggregate": "sum" },
       { "label": "PO Number", "type": "autonumber", "pattern": "PO/{YYYY}/{0000}" },
       { "label": "Basic Details", "type": "section" }
@@ -278,17 +285,25 @@ You output ONLY a JSON object (no prose) with this shape:
   "dashboard": { "kpis": [{ "label": "Total purchases", "form": "Purchase", "aggregate": "sum", "field": "Total" }], "charts": [{ "title": "Purchases by month", "form": "Purchase", "chartType": "column", "groupBy": "createdAt", "metric": "sum", "field": "Total" }] }
 }
 Field types: text, textarea, richtext, email, phone, url, number, decimal, currency, percentage, rating, dropdown, radio, checkbox, multiselect, date, datetime, time, lookup, subform, users, formula, rollup, autonumber, file, image, signature, address, geolocation, barcode, color, section.
+Subforms: either inline ("columns": [field objects]) or backed by an existing/child form ("linkForm": "<form name>", "columns": [labels of that form's fields]) — use linkForm when the user asks for the line items as a separate form (so rows are records of that form, linked to the parent automatically). The child form must be defined in "forms" (e.g. "Invoice Item" with Product lookup, Quantity, Rate, Amount formula) or already exist.
 Rules: use "section" fields to group; lookups reference other forms by name; formulas use snake_case link names of labels (e.g. "Vendor Name" → vendor_name) and functions: ${FUNCTION_DOCS.slice(0, 14).map((d) => d.sig).join(", ")}.
 Workflow scripts MUST be plain modern JavaScript (NOT Zoho Deluge): use "for (const row of input.items) { … }", "if (…) { … }", "const x = …", "showError(\"msg\")" to block, "confirm(\"msg\")" to ask, "blockSubmit()" — never "for each", "cancel submit", "info", "alert" statements without parentheses. Subform rows are accessed as input.<subform_link_name> (an array) and columns by link name (row.quantity). API: ${SCRIPT_API_DOCS.slice(0, 16).map((d) => d.sig).join("; ")}. Triggers: onLoad, onUserInput, onValidate, onSubmit, onSuccess.
 Report types (use "type"): ${REPORT_TYPE_IDS.join(", ")}. Choose per business need:\n${REPORT_TYPES_PROMPT}
 Give every app 4–8 reports beyond the default tables: at least one chart, one summary/pivot, and finance/stock views (aging, ledger) where money or stock is involved; kanban/funnel for pipelines; scheduler/gantt/calendar for bookings, projects, appointments; checklist for tasks; tree for categories/BOM.
 Master forms (Item, Vendor, Customer) first, then transactions. Keep it practical for an Indian SME. 3–8 forms.`;
 
-export interface GeneratedApp { forms: FormDefinition[]; reports: ReportDefinition[]; workflows: WorkflowDefinition[]; roles: Array<{ name: string; preset: "full" | "view" | "none" }>; dashboard?: any; raw: any; }
+export interface GeneratedApp { forms: FormDefinition[]; reports: ReportDefinition[]; workflows: WorkflowDefinition[]; roles: Array<{ name: string; preset: "full" | "view" | "none" }>; dashboard?: any; raw: any; /** pre-existing forms changed by the generation (e.g. a parent lookup added for a linked subform) */ updatedForms?: FormDefinition[]; }
 
-export async function generateAppFromDescription(description: string, existing: AppDefinition, onDelta?: (t: string) => void): Promise<GeneratedApp> {
-  const text = await ask(`You are an expert Zoho-Creator-style app architect. ${SCHEMA_DOC}`, `Design an application for: ${description}\n\nExisting forms in this app (reuse names if relevant): ${existing.forms.map((f) => f.name).join(", ") || "none"}.`, onDelta, 24000);
+export interface GenerateOptions {
+  /** false (default): only the automatic table report per form; no AI-suggested reports, no dashboard. */
+  suggestReports?: boolean;
+}
+
+export async function generateAppFromDescription(description: string, existing: AppDefinition, onDelta?: (t: string) => void, opts: GenerateOptions = {}): Promise<GeneratedApp> {
+  const extra = opts.suggestReports ? "" : "\nIMPORTANT: output \"reports\": [] and omit \"dashboard\" — every form automatically gets its own table report; do not design any additional reports unless the user explicitly asks for a specific report in the description.";
+  const text = await ask(`You are an expert Zoho-Creator-style app architect. ${SCHEMA_DOC}${extra}`, `Design an application for: ${description}\n\nExisting forms in this app (reuse names if relevant): ${existing.forms.map((f) => f.name).join(", ") || "none"}.`, onDelta, 24000, { json: true });
   const raw = extractJson(text);
+  if (!opts.suggestReports && !/\breport|dashboard|chart|kanban|ledger|aging|pivot\b/i.test(description)) { raw.reports = []; delete raw.dashboard; }
   const result = materialize(raw, existing);
   // Auto-repair scripts the model wrote in the wrong dialect (e.g. Deluge) before handing them over.
   await Promise.all(result.workflows.map(async (w) => {
@@ -346,8 +361,9 @@ export function materialize(raw: any, existing: AppDefinition): GeneratedApp {
       }
       if (rfield.type === "subform") {
         f.subform = { sourceType: "inline", columns: [], showTotals: true, allowBulkAdd: true, allowDuplicateRow: true, totalColumnIds: [] };
+        if (rfield.linkForm) { (f as any).__linkForm = String(rfield.linkForm); (f as any).__linkCols = Array.isArray(rfield.columns) ? rfield.columns.map((c: any) => (typeof c === "string" ? c : c?.label)).filter(Boolean) : undefined; }
         const tmp: FormDefinition = { ...form, fields: [] };
-        for (const rc of rfield.columns || []) {
+        for (const rc of rfield.linkForm ? [] : rfield.columns || []) {
           const col = mkField(rc, tmp, true);
           tmp.fields.push(col);
           const c: any = { id: col.id, label: col.label, linkName: col.linkName, type: col.type, required: col.required, options: col.options, currencySymbol: col.currencySymbol, decimalPlaces: col.decimalPlaces, width: col.type === "lookup" ? 200 : 130 };
@@ -394,6 +410,11 @@ export function materialize(raw: any, existing: AppDefinition): GeneratedApp {
     }
   }
 
+  // linked subforms ("linkForm"): configure columns from the child form and add the parent lookup there
+  const linked = resolveLinkedSubforms([...existing.forms, ...forms], new Set(forms.map((f) => f.id)));
+  forms.splice(0, forms.length, ...linked.forms.filter((f) => forms.some((n) => n.id === f.id)));
+  const updatedForms = linked.updatedExisting;
+
   // reports
   const reports: ReportDefinition[] = [];
   const usedLinks = existing.reports.map((r) => r.linkName);
@@ -420,7 +441,7 @@ export function materialize(raw: any, existing: AppDefinition): GeneratedApp {
   // workflows
   const workflows: WorkflowDefinition[] = (raw.workflows || []).map((w: any) => { const f = findForm(w.form); return f ? { id: generateId("wf"), name: w.name, description: w.description || "", formId: f.id, mode: "code" as const, codeScript: String(w.script || ""), trigger: { type: w.trigger || "onUserInput" }, actions: [], active: true, version: 1, createdAt: now, updatedAt: now } : null; }).filter(Boolean);
 
-  return { forms, reports, workflows, roles: raw.roles || [], dashboard: raw.dashboard, raw };
+  return { forms, reports, workflows, roles: raw.roles || [], dashboard: raw.dashboard, raw, updatedForms };
 }
 
 // ── Script repair ────────────────────────────────────────────────────────────

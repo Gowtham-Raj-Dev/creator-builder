@@ -7,36 +7,45 @@ service cloud.firestore {
     function email() { return signedIn() ? request.auth.token.email.lower() : ""; }
     // Platform owner(s): keep in sync with src/lib/auth/config.ts
     function isPlatformOwner() { return signedIn() && email() in ['gowthamraje1221@gmail.com']; }
-    function isAppOwner(app) { return isPlatformOwner() || (signedIn() && app.ownerEmail != null && app.ownerEmail.lower() == email()); }
-    function isMember(app) { return signedIn() && app.memberEmails != null && email() in app.memberEmails; }
+    function isAppOwner(app) { return isPlatformOwner() || (signedIn() && app.get('ownerEmail', null) != null && app.ownerEmail.lower() == email()); }
+    // Per-app builder collaborators (app.builderEmails): may edit the app definition, but not ownership or the collaborator list
+    function isBuilder(app) { return signedIn() && app.get('builderEmails', null) != null && email() in app.builderEmails; }
+    function canBuild(app) { return isAppOwner(app) || isBuilder(app); }
+    function keepsOwnership() {
+      return request.resource.data.get('ownerEmail', null) == resource.data.get('ownerEmail', null)
+        && request.resource.data.get('builderEmails', []) == resource.data.get('builderEmails', [])
+        && request.resource.data.get('builders', []) == resource.data.get('builders', []);
+    }
+    function isMember(app) { return signedIn() && app.get('memberEmails', null) != null && email() in app.memberEmails; }
     function isPublic(app) { return app.sharing != null && app.sharing.mode == 'public_view'; }
     function appDoc(appId) { return get(/databases/$(database)/documents/apps/$(appId)).data; }
 
     // ── apps ─────────────────────────────────────────────────────────────────
     match /apps/{appId} {
-      allow read: if isAppOwner(resource.data) || isMember(resource.data) || isPublic(resource.data);
+      allow read: if canBuild(resource.data) || isMember(resource.data) || isPublic(resource.data);
       allow create: if isPlatformOwner();
-      allow update, delete: if isAppOwner(resource.data);
+      allow update: if isAppOwner(resource.data) || (isBuilder(resource.data) && keepsOwnership());
+      allow delete: if isAppOwner(resource.data);
 
       match /records/{recordId} {
-        allow read: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
-        allow create, update, delete: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+        allow read: if canBuild(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
+        allow create, update, delete: if canBuild(appDoc(appId)) || isMember(appDoc(appId));
       }
       match /versions/{versionId} {
-        allow read: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
-        allow write: if isAppOwner(appDoc(appId));
+        allow read: if canBuild(appDoc(appId)) || isMember(appDoc(appId)) || isPublic(appDoc(appId));
+        allow write: if canBuild(appDoc(appId));
       }
       match /audit/{entryId} {
-        allow read: if isAppOwner(appDoc(appId));
-        allow create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+        allow read: if canBuild(appDoc(appId));
+        allow create: if canBuild(appDoc(appId)) || isMember(appDoc(appId));
       }
       match /workflowLogs/{entryId} {
-        allow read: if isAppOwner(appDoc(appId));
-        allow create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
+        allow read: if canBuild(appDoc(appId));
+        allow create: if canBuild(appDoc(appId)) || isMember(appDoc(appId));
       }
       match /comments/{commentId} {
-        allow read, create: if isAppOwner(appDoc(appId)) || isMember(appDoc(appId));
-        allow delete: if isAppOwner(appDoc(appId));
+        allow read, create: if canBuild(appDoc(appId)) || isMember(appDoc(appId));
+        allow delete: if canBuild(appDoc(appId));
       }
     }
 
@@ -58,6 +67,13 @@ service cloud.firestore {
     }
     match /platform/{doc} {
       allow read, write: if isPlatformOwner();
+      // builder collaborators may read/write an app's own AI keys (platform/ai_<appId>), never the global platform/settings
+      allow read, write: if doc.matches('ai_.*') && isBuilder(appDoc(doc.replace('ai_', '')));
+      // members may read an app's own AI keys only when the owner switched on "Allow members to use AI" for that app
+      allow read: if doc.matches('ai_.*') && signedIn()
+        && isMember(appDoc(doc.replace('ai_', '')))
+        && appDoc(doc.replace('ai_', '')).settings != null
+        && appDoc(doc.replace('ai_', '')).settings.allowMembersAi == true;
     }
   }
 }

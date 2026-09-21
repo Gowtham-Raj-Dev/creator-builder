@@ -99,7 +99,7 @@ export interface LookupConfig {
   targetFormId: string;
   displayFieldId: string;
   valueFieldId?: string; // defaults to 'id'
-  relationshipType: "lookup";
+  relationshipType: "lookup" | "parent"; // parent: auto-managed back-reference from a child form used as a subform
   secondaryDisplayFieldIds?: string[]; // extra columns shown in picker / display
   displayStyle?: "dropdown" | "modal" | "radio";
   multiple?: boolean; // stores string[] instead of string
@@ -154,8 +154,13 @@ export interface SubformColumn {
 }
 
 export interface SubformConfig {
+  /** inline: rows live only inside the parent record. existing_form: each row is also a real record of `targetFormId`. */
   sourceType: "inline" | "existing_form";
   targetFormId?: string; // if existing_form
+  /** existing_form: lookup field in the target form that points back to the parent form (auto-created). Child rows get it set to the parent record id. */
+  parentLinkFieldId?: string;
+  /** existing_form: which target-form fields are shown as columns (column ids = target field ids). */
+  linkedFieldIds?: string[];
   columns: SubformColumn[];
   showTotals?: boolean;
   totalColumnIds?: string[]; // columns to total in footer
@@ -699,6 +704,14 @@ export interface AppMember {
   lastLoginAt?: string;
 }
 
+/** A person who may open this app in the builder (edit forms, reports, workflows, publish). Not a platform owner. */
+export interface AppCollaborator {
+  email: string; // lowercase
+  name?: string;
+  addedAt: string;
+  addedBy?: string;
+}
+
 export interface SharingConfig {
   mode: "private" | "public_view"; // public_view = anyone with link can view (read-only)
   shareToken?: string;
@@ -739,6 +752,7 @@ export interface AppSettings {
   navigation?: NavItem[]; // custom menu; empty = auto
   menuSections?: MenuSection[]; // sections used by the automatic menu (renameable / extendable)
   showRecentInSidebar?: boolean; // "Recent" records list under the menu (off by default)
+  allowMembersAi?: boolean; // members may open "Discuss with AI" in the live app (needs app-specific AI keys; off by default)
   showGlobalSearch?: boolean;
   enableComments?: boolean;
   enableAttachments?: boolean;
@@ -755,7 +769,43 @@ export interface AppVersion {
   label?: string;
   createdAt: string;
   createdBy: string;
-  snapshot: Pick<AppDefinition, "forms" | "reports" | "pages" | "workflows" | "relationships" | "settings" | "roles">;
+  snapshot: Pick<AppDefinition, "forms" | "reports" | "pages" | "workflows" | "relationships" | "settings" | "roles"> & Partial<Pick<AppDefinition, "printTemplates">>;
+}
+
+/** Saved print / document design for a form (invoice, receipt, challan…). Placeholders: {{field_link}}, {{#items}}…{{/items}}, {{app.name}}, {{today}}. */
+export interface PrintTemplate {
+  id: string;
+  name: string;
+  formId: string;
+  html: string;
+  css?: string;
+  paper?: "A4" | "A5" | "Letter" | "thermal80";
+  orientation?: "portrait" | "landscape";
+  isDefault?: boolean; // used by the Print button for this form
+  /** Visual designer model; when present `html` is generated from it. Absent = hand-written / AI code. */
+  design?: PrintDesign;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Visual print designer ────────────────────────────────────────────────────
+
+export type PrintBlock =
+  | { id: string; type: "header"; title: string; showLogo?: boolean; showAppName?: boolean; metaFieldIds?: string[]; align?: "left" | "right" }
+  | { id: string; type: "fields"; title?: string; fieldIds: string[]; columns?: 1 | 2 | 3; style?: "boxed" | "plain" | "table" }
+  | { id: string; type: "twoColumns"; left: { title?: string; fieldIds: string[] }; right: { title?: string; fieldIds: string[] } }
+  | { id: string; type: "items"; subformFieldId: string; columnIds?: string[]; showIndex?: boolean; totalColumnIds?: string[] }
+  | { id: string; type: "totals"; rows: Array<{ label: string; fieldId: string }>; wordsFieldId?: string }
+  | { id: string; type: "text"; html: string }
+  | { id: string; type: "notes"; title?: string; fieldId?: string; text?: string }
+  | { id: string; type: "signature"; labels: string[] }
+  | { id: string; type: "footer"; text?: string; showPrintedBy?: boolean; showPageInfo?: boolean }
+  | { id: string; type: "divider" }
+  | { id: string; type: "spacer"; height?: number };
+
+export interface PrintDesign {
+  blocks: PrintBlock[];
+  theme: { accent?: string; font?: "sans" | "serif" | "mono"; fontSize?: number; table?: "striped" | "lines" | "grid"; boxed?: boolean };
 }
 
 export interface AppDefinition {
@@ -769,12 +819,15 @@ export interface AppDefinition {
   roles: AppRole[];
   members: AppMember[];
   memberEmails: string[]; // denormalised for queries & security rules
+  builders?: AppCollaborator[]; // per-app builder access (managed by the app owner only)
+  builderEmails?: string[]; // denormalised for queries & security rules
   sharing?: SharingConfig;
 
   forms: FormDefinition[];
   reports: ReportDefinition[];
   pages: PageDefinition[];
   workflows: WorkflowDefinition[];
+  printTemplates?: PrintTemplate[];
   relationships: RelationshipDefinition[];
 
   schemaVersion: number; // per-app schema version for migrations

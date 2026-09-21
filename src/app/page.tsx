@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { useAuth } from "@/context/AuthContext";
 import { Icon } from "@/components/ui/IconPicker";
 import { FormBuilderMock, ReportMock, WorkflowMock, DashboardBuilderMock, RolesMock, AiMock } from "@/components/home/Mockups";
@@ -127,10 +128,10 @@ const HeroMockup: React.FC = () => {
 };
 
 export default function Home() {
-  const { user, loading, isOwner } = useAuth();
+  const { user, loading, canBuild } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [openBiz, setOpenBiz] = useState<string | null>(BUSINESS_EXAMPLES[0].name);
-  const workspace = isOwner ? "/builder" : "/app";
+  const workspace = canBuild ? "/builder" : "/app";
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -138,7 +139,7 @@ export default function Home() {
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-6 xl:px-10 h-16 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2.5 shrink-0">
-            <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-sm"><Layers className="w-5 h-5" /></span>
+            <BrandLogo size={36} className="shadow-sm rounded-xl" />
             <span className="whitespace-nowrap"><span className="block text-sm font-bold tracking-tight">YourBuilder</span><span className="hidden xl:block text-[10px] text-slate-400 -mt-0.5">Low-code platform for every business</span></span>
           </Link>
           <nav className="hidden lg:flex items-center gap-0.5 text-[12px] font-medium text-slate-600 whitespace-nowrap">
@@ -343,7 +344,7 @@ export default function Home() {
       <footer className="bg-slate-950 border-t border-white/10 text-slate-400 text-xs">
         <div className="max-w-[1400px] mx-auto px-6 xl:px-10 py-12 grid gap-10 md:grid-cols-12">
           <div className="md:col-span-4 space-y-3">
-            <div className="flex items-center gap-2.5"><span className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white"><Layers className="w-5 h-5" /></span><span><span className="block text-sm font-bold text-white">YourBuilder</span><span className="block text-[10px] text-slate-500">Low-code platform for every business</span></span></div>
+            <div className="flex items-center gap-2.5"><BrandLogo size={36} /><span><span className="block text-sm font-bold text-white">YourBuilder</span><span className="block text-[10px] text-slate-500">Low-code platform for every business</span></span></div>
             <p className="leading-relaxed max-w-sm">Forms, reports, workflows, dashboards and roles — designed in the browser, stored in Firebase, shared with your team by designation.</p>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]"><span className="flex items-center gap-1.5"><Database className="w-3.5 h-3.5" /> Firestore realtime</span><span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Google / email sign-in</span><span className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" /> Phone &amp; tablet</span></div>
           </div>

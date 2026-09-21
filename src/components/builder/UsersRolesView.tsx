@@ -37,7 +37,7 @@ export const UsersRolesView: React.FC = () => {
     <div className="flex-1 bg-slate-100/60 h-full overflow-y-auto p-6 md:p-8">
       <div className="max-w-6xl mx-auto space-y-5">
         <div className="flex items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-3xs gap-4">
-          <div><h1 className="text-lg font-bold text-slate-900 flex items-center gap-2"><Users className="w-5 h-5 text-blue-600" /> Users & Roles</h1><p className="text-xs text-slate-500 mt-0.5">Designations control which forms, reports and pages members can see, and what they can do. Only the owner can open the builder.</p></div>
+          <div><h1 className="text-lg font-bold text-slate-900 flex items-center gap-2"><Users className="w-5 h-5 text-blue-600" /> Users & Roles</h1><p className="text-xs text-slate-500 mt-0.5">Designations control which forms, reports and pages members can see, and what they can do. Builder access is granted separately under Share → Builder access.</p></div>
           <div className="flex items-center gap-2"><Tabs active={tab} onChange={setTab} tabs={[{ id: "roles", label: "Designations", icon: <Shield className="w-3.5 h-3.5" />, count: currentApp.roles.length }, { id: "members", label: "Members", icon: <Users className="w-3.5 h-3.5" />, count: currentApp.members.length }]} /><Button variant="outline" size="sm" onClick={() => setShareOpen(true)} icon={<Share2 className="w-3.5 h-3.5" />}>Share link</Button></div>
         </div>
 
@@ -135,7 +135,7 @@ export const UsersRolesView: React.FC = () => {
                       <td className="px-4 py-2.5 text-right"><IconButton tone="danger" onClick={() => removeMember(m.email)}><Trash2 className="w-4 h-4" /></IconButton></td>
                     </tr>
                   ))}
-                  {currentApp.members.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400">No members yet. Only <span className="font-semibold">{currentApp.ownerEmail}</span> can open this app.</td></tr>}
+                  {currentApp.members.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400">No members yet. Only <span className="font-semibold">{currentApp.ownerEmail}</span>{(currentApp.builders?.length || 0) > 0 ? ` and ${currentApp.builders!.length} builder collaborator(s)` : ""} can open this app.</td></tr>}
                 </tbody>
               </table>
             </div>

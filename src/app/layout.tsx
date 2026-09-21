@@ -19,8 +19,12 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "YourBuilder — Low-Code Application Platform",
+  title: { default: "YourBuilder — Low-Code Application Platform", template: "%s · YourBuilder" },
   description: "Build forms, lookups, subforms, formulas, workflows, reports and dashboards. Firestore backed, role-based sharing.",
+  applicationName: "YourBuilder",
+  // favicon.ico / icon.png / apple-icon.png in src/app are picked up automatically by Next
+  openGraph: { title: "YourBuilder — Low-Code Application Platform", description: "Forms, reports, workflows, dashboards and roles — designed in the browser.", siteName: "YourBuilder", type: "website" },
+  themeColor: "#2563eb",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -12,7 +12,7 @@ export interface HealthIssue {
   message: string;
   fix?: string;
   /** When set, `applyHealthFix` can repair this issue automatically. */
-  autoFix?: { label: string; kind: "ledger_source" | "ledger_add_sources" | "view_config"; reportId: string; sourceId?: string };
+  autoFix?: { label: string; kind: "ledger_source" | "ledger_add_sources" | "view_config" | "prune_columns"; reportId: string; sourceId?: string };
 }
 
 // ── Ledger helpers (shared by the check and the auto-fix) ────────────────────
@@ -90,6 +90,9 @@ export function applyHealthFix(app: AppDefinition, issue: HealthIssue): AppDefin
     const primaryId = rep.ledger?.primaryFormId || rep.sourceFormId;
     const base = rep.ledger || defaultConfigFor("ledger", rep, app.forms.find((f) => f.id === rep.sourceFormId)!).ledger!;
     next = { ...rep, ledger: { ...base, primaryFormId: primaryId, sources: guessLedgerSources(app, primaryId) } };
+  } else if (fx.kind === "prune_columns") {
+    const src = app.forms.find((f) => f.id === rep.sourceFormId);
+    if (src) next = { ...rep, columns: rep.columns.filter((c) => ["createdAt", "updatedAt", "createdBy"].includes(c.fieldId) || src.fields.some((f) => f.id === c.fieldId)) };
   } else if (fx.kind === "view_config") {
     const form = app.forms.find((f) => f.id === rep.sourceFormId);
     if (form && rep.reportType) { const key = rep.reportType as keyof ReportDefinition; const stripped = { ...rep, [key]: undefined }; next = { ...rep, ...defaultConfigFor(rep.reportType, stripped, form) }; }
@@ -173,7 +176,9 @@ export function runHealthCheck(app: AppDefinition): HealthIssue[] {
   for (const rep of app.reports) {
     const src = app.forms.find((f) => f.id === rep.sourceFormId);
     if (!src) { push({ severity: "error", area: "report", entityId: rep.id, entityName: rep.name, message: "Report source form was deleted.", fix: "Delete this report or re-point it." }); continue; }
-    for (const col of rep.columns) if (!src.fields.some((f) => f.id === col.fieldId)) push({ severity: "warning", area: "report", entityId: rep.id, entityName: rep.name, message: `Column "${col.label}" refers to a deleted field.` });
+    const SYSTEM_COLS = ["createdAt", "updatedAt", "createdBy"];
+    const stale = rep.columns.filter((col) => !SYSTEM_COLS.includes(col.fieldId) && !src.fields.some((f) => f.id === col.fieldId));
+    if (stale.length) push({ severity: "warning", area: "report", entityId: rep.id, entityName: rep.name, message: `${stale.length} column${stale.length > 1 ? "s" : ""} (${stale.map((c) => `"${c.label}"`).join(", ")}) refer to fields that no longer exist.`, fix: "Remove the stale columns.", autoFix: { label: "Remove stale columns", kind: "prune_columns", reportId: rep.id } });
     for (const flt of rep.filters || []) if (!src.fields.some((f) => f.id === flt.fieldId) && !["createdAt", "updatedAt", "createdBy"].includes(flt.fieldId)) push({ severity: "warning", area: "report", entityId: rep.id, entityName: rep.name, message: "A filter refers to a deleted field." });
     // view-specific configuration (every type declares what it needs in reportTypes.ts)
     const meta = REPORT_TYPE_META[rep.reportType || "table"];
@@ -253,6 +258,7 @@ export function runHealthCheck(app: AppDefinition): HealthIssue[] {
     for (const field of form.fields) {
       if (field.type === "section") continue;
       const shown = reps.some((r) => r.columns.some((c) => c.fieldId === field.id && c.visible !== false));
+      if (field.type === "lookup" && field.lookup?.relationshipType === "parent") continue; // auto-managed back-reference of a linked subform
       if (!shown && !fieldRefCount.get(`${form.id}.${field.id}`)) push({ severity: "info", area: "form", entityId: form.id, entityName: `${form.name} › ${field.label}`, message: "Field is not displayed in any report or used by workflows." });
     }
   }

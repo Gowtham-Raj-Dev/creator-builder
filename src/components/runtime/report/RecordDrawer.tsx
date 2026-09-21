@@ -85,7 +85,7 @@ export const RecordDrawer: React.FC<{
     <Drawer
       isOpen
       onClose={onClose}
-      width="max-w-3xl"
+      width="max-w-5xl"
       header={
         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60 space-y-3">
           <div className="flex items-start justify-between gap-3">
@@ -121,7 +121,24 @@ export const RecordDrawer: React.FC<{
                   {field.type === "lookup" && raw && onLookupClick ? (
                     <button type="button" onClick={() => onLookupClick(field.id, Array.isArray(raw) ? raw[0] : raw)} className="text-sm font-semibold text-blue-600 hover:underline inline-flex items-center gap-1">{val}<ExternalLink className="w-3 h-3" /></button>
                   ) : field.type === "subform" && Array.isArray(raw) && raw.length ? (
-                    <div className="overflow-x-auto"><table className="w-full text-[11px] mt-1"><thead className="text-slate-500"><tr>{field.subform?.columns.map((c) => <th key={c.id} className="text-left py-1 pr-3 font-medium">{c.label}</th>)}</tr></thead><tbody>{raw.map((row: any, i: number) => <tr key={i} className="border-t border-slate-200">{field.subform?.columns.map((c) => <td key={c.id} className="py-1 pr-3 text-slate-800">{c.type === "lookup" && c.lookup ? (recordsMap[c.lookup.targetFormId] || []).find((r) => r.id === row[c.id])?.data?.[c.lookup.displayFieldId] ?? "—" : String(row[c.id] ?? "—")}</td>)}</tr>)}</tbody></table></div>
+                    <div className="mt-1 -mx-3.5 -mb-3.5 rounded-b-lg overflow-x-auto border-t border-slate-200 bg-white">
+                      <table className="text-[11.5px] min-w-full border-collapse">
+                        <thead className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide">
+                          <tr><th className="text-left px-3 py-2 font-semibold w-8">#</th>{field.subform?.columns.map((c) => { const num = ["number", "currency", "decimal", "percentage", "formula"].includes(c.type) || Boolean(c.formula); return <th key={c.id} className={`px-3 py-2 font-semibold whitespace-nowrap ${num ? "text-right" : "text-left"}`} style={{ minWidth: c.width || 120 }}>{c.label}</th>; })}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {raw.map((row: any, i: number) => (
+                            <tr key={i} className="hover:bg-slate-50/70">
+                              <td className="px-3 py-1.5 text-slate-400">{i + 1}</td>
+                              {field.subform?.columns.map((c) => { const num = ["number", "currency", "decimal", "percentage", "formula"].includes(c.type) || Boolean(c.formula); const v = row[c.id]; const text = c.type === "lookup" && c.lookup ? (recordsMap[c.lookup.targetFormId] || []).find((r) => r.id === v)?.data?.[c.lookup.displayFieldId] ?? "—" : c.type === "checkbox" ? (v ? "Yes" : "No") : v === undefined || v === null || v === "" ? "—" : num && typeof v === "number" ? v.toLocaleString("en-IN", { maximumFractionDigits: c.decimalPlaces ?? 2 }) : String(v); return <td key={c.id} className={`px-3 py-1.5 whitespace-nowrap ${num ? "text-right tabular-nums font-medium text-slate-900" : "text-slate-800"}`}>{text}</td>; })}
+                            </tr>
+                          ))}
+                        </tbody>
+                        {field.subform?.showTotals !== false && (field.subform?.totalColumnIds?.length || 0) > 0 && (
+                          <tfoot className="bg-slate-50 border-t border-slate-200 font-semibold"><tr><td className="px-3 py-1.5 text-[10px] uppercase text-slate-400">Total</td>{field.subform?.columns.map((c) => <td key={c.id} className="px-3 py-1.5 text-right tabular-nums">{field.subform?.totalColumnIds?.includes(c.id) ? raw.reduce((s: number, r: any) => s + (Number(r[c.id]) || 0), 0).toLocaleString("en-IN", { maximumFractionDigits: 2 }) : ""}</td>)}</tr></tfoot>
+                        )}
+                      </table>
+                    </div>
                   ) : field.type === "richtext" ? (
                     <div className="text-sm text-slate-800 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: String(raw || "") }} />
                   ) : field.type === "image" && raw?.url ? (

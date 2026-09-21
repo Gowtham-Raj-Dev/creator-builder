@@ -8,11 +8,11 @@ import { FullScreenLoader } from "@/components/auth/AuthGate";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, loading, isOwner } = useAuth();
+  const { user, loading, canBuild } = useAuth();
 
   useEffect(() => {
-    if (!loading && user) router.replace(isOwner ? "/builder" : "/app");
-  }, [loading, user, isOwner, router]);
+    if (!loading && user) router.replace(canBuild ? "/builder" : "/app");
+  }, [loading, user, canBuild, router]);
 
   if (loading) return <FullScreenLoader text="Checking your session…" />;
   return <LoginScreen />;

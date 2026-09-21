@@ -13,6 +13,8 @@ const migrations: Record<number, Migration> = {
     roles: app.roles || [],
     members: app.members || [],
     memberEmails: app.memberEmails || [],
+    builders: app.builders || [],
+    builderEmails: app.builderEmails || [],
     sharing: app.sharing || { mode: "private" },
   }),
   // v2 → v3: form columns default, field width default

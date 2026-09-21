@@ -1,3 +1,4 @@
+import { buildXlsx } from "@/lib/utils/xlsx";
 import {
   AggregateType,
   ConditionalFormat,
@@ -304,13 +305,14 @@ export function downloadText(filename: string, content: string, mime = "text/csv
 }
 
 /** Excel-compatible export (HTML table saved as .xls opens directly in Excel). */
-export function downloadExcel(filename: string, headers: string[], rows: string[][]) {
-  const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><table border="1"><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></body></html>`;
-  const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+export function downloadExcel(filename: string, headers: string[], rows: string[][], sheetName?: string) {
+  // real .xlsx (OOXML zip) — Excel opens it silently; the old HTML-as-.xls trick triggered a "format doesn't match" warning
+  const name = filename.replace(/\.xlsx?$/i, "") + ".xlsx";
+  const bytes = buildXlsx(sheetName || name.replace(/\.xlsx$/i, ""), headers, rows);
+  const blob = new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
+  a.href = url; a.download = name; a.click();
   URL.revokeObjectURL(url);
 }
 

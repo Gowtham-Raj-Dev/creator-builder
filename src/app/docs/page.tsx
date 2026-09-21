@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { useAuth } from "@/context/AuthContext";
 import { Icon } from "@/components/ui/IconPicker";
 import { DOCS, DocBlock } from "@/lib/docs/reference";
@@ -46,10 +47,10 @@ const Block: React.FC<{ block: DocBlock }> = ({ block }) => {
 };
 
 export default function DocsPage() {
-  const { user, loading, isOwner } = useAuth();
+  const { user, loading, canBuild } = useAuth();
   const [q, setQ] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const workspace = isOwner ? "/builder" : "/app";
+  const workspace = canBuild ? "/builder" : "/app";
 
   // simple full-text filter over topics
   const chapters = useMemo(() => {
@@ -76,7 +77,7 @@ export default function DocsPage() {
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-6 xl:px-10 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 min-w-0">
-            <Link href="/" className="flex items-center gap-2.5 shrink-0"><span className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white"><Layers className="w-5 h-5" /></span><span className="whitespace-nowrap"><span className="block text-sm font-bold tracking-tight">YourBuilder</span><span className="hidden md:block text-[10px] text-slate-400 -mt-0.5">Documentation</span></span></Link>
+            <Link href="/" className="flex items-center gap-2.5 shrink-0"><BrandLogo size={36} /><span className="whitespace-nowrap"><span className="block text-sm font-bold tracking-tight">YourBuilder</span><span className="hidden md:block text-[10px] text-slate-400 -mt-0.5">Documentation</span></span></Link>
             <div className="relative hidden sm:block"><Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search docs… (e.g. increment, aging, required-if)" className="w-72 lg:w-96 text-xs pl-9 pr-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/25" /></div>
           </div>
           <div className="flex items-center gap-2 shrink-0">

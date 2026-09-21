@@ -6,9 +6,11 @@ import { useAppBuilder } from "@/context/AppBuilderContext";
 import { useToast } from "@/context/ToastContext";
 import { Button } from "@/components/ui/Button";
 import { Select, Textarea, Badge } from "@/components/ui/FormControls";
-import { generateReportFromPrompt, generateFormFromPrompt, generateWorkflowFromPrompt, ReportProposal, FormProposal, WorkflowProposal } from "@/lib/ai/generators";
+import { generateReportFromPrompt, generateFormFromPrompt, generateWorkflowFromPrompt, generateDashboardFromPrompt, ReportProposal, FormProposal, WorkflowProposal, DashboardProposal } from "@/lib/ai/generators";
 import { getBuilderUrl } from "@/lib/utils/routes";
-import { TableProperties, FileText, Zap, ArrowRight, CheckCircle2, Sparkles, Filter, Code2 } from "lucide-react";
+import { AiDeletePanel } from "./AiDeletePanel";
+import { withParentLinkColumns } from "@/lib/engine/subformLink";
+import { TableProperties, FileText, Zap, ArrowRight, CheckCircle2, Sparkles, Filter, Code2, LayoutDashboard } from "lucide-react";
 
 const useRun = () => {
   const [busy, setBusy] = useState(false);
@@ -21,13 +23,13 @@ const ErrorBox: React.FC<{ error: string }> = ({ error }) => (error ? <div class
 
 // ── New report ───────────────────────────────────────────────────────────────
 
-export const AiNewReport: React.FC<{ disabled: boolean }> = ({ disabled }) => {
+export const AiNewReport: React.FC<{ disabled: boolean; initialPrompt?: string; initialFormId?: string }> = ({ disabled, initialPrompt, initialFormId }) => {
   const { currentApp, updateCurrentApp } = useAppBuilder();
   const { showToast } = useToast();
   const router = useRouter();
   const { busy, error, run } = useRun();
-  const [formId, setFormId] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const [formId, setFormId] = useState(initialFormId || "");
+  const [prompt, setPrompt] = useState(initialPrompt || "");
   const [proposal, setProposal] = useState<ReportProposal | null>(null);
   if (!currentApp) return null;
   const form = proposal ? currentApp.forms.find((f) => f.id === proposal.report.sourceFormId) : null;
@@ -56,18 +58,19 @@ export const AiNewReport: React.FC<{ disabled: boolean }> = ({ disabled }) => {
           <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" onClick={() => setProposal(null)}>Discard</Button><Button size="sm" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => { updateCurrentApp((prev) => ({ ...prev, reports: [...prev.reports, proposal.report] })); showToast(`Report "${proposal.report.name}" created`, "success"); router.push(getBuilderUrl(currentApp.linkName, { tab: "reports", report: proposal.report.linkName })); }}>Create & open</Button></div>
         </div>
       )}
+      <AiDeletePanel kind="report" />
     </div>
   );
 };
 
 // ── New form ─────────────────────────────────────────────────────────────────
 
-export const AiNewForm: React.FC<{ disabled: boolean }> = ({ disabled }) => {
+export const AiNewForm: React.FC<{ disabled: boolean; initialPrompt?: string }> = ({ disabled, initialPrompt }) => {
   const { currentApp, updateCurrentApp } = useAppBuilder();
   const { showToast } = useToast();
   const router = useRouter();
   const { busy, error, run } = useRun();
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt || "");
   const [proposal, setProposal] = useState<FormProposal | null>(null);
   if (!currentApp) return null;
 
@@ -80,24 +83,26 @@ export const AiNewForm: React.FC<{ disabled: boolean }> = ({ disabled }) => {
       {proposal && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3 text-xs">
           <div className="font-bold text-slate-900 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-600" /> {proposal.form.name} <span className="font-normal text-slate-500">· {proposal.form.fields.filter((f) => f.type !== "section").length} fields</span></div>
+          {proposal.extraForms?.length ? <div className="text-[11px] text-purple-800 bg-purple-50 border border-purple-100 rounded-lg px-2.5 py-1.5">Also creates child form{proposal.extraForms.length > 1 ? "s" : ""}: <strong>{proposal.extraForms.map((f) => f.name).join(", ")}</strong> — used as a linked subform (rows saved as its records, with a lookup back to {proposal.form.name}).</div> : null}
           <p className="text-slate-600">{proposal.explanation}</p>
           <div className="flex flex-wrap gap-1">{proposal.form.fields.map((f) => <Badge key={f.id} variant={f.type === "lookup" ? "primary" : f.type === "subform" ? "purple" : f.type === "formula" || f.type === "rollup" ? "indigo" : f.type === "section" ? "dark" : "default"}>{f.label}{f.type === "lookup" ? ` → ${currentApp.forms.find((x) => x.id === f.lookup?.targetFormId)?.name || "?"}` : ""}{f.required ? " *" : ""}</Badge>)}</div>
-          <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" onClick={() => setProposal(null)}>Discard</Button><Button size="sm" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => { updateCurrentApp((prev) => ({ ...prev, forms: [...prev.forms, proposal.form], reports: [...prev.reports, proposal.report], roles: prev.roles.map((r) => ({ ...r, forms: { ...r.forms, [proposal.form.id]: r.defaultForm || { view: true, create: true, edit: true, delete: false, print: true, export: false, import: false, recordScope: "all" } } })) })); showToast(`Form "${proposal.form.name}" created`, "success"); router.push(getBuilderUrl(currentApp.linkName, { tab: "forms", form: proposal.form.linkName })); }}>Create & open</Button></div>
+          <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" onClick={() => setProposal(null)}>Discard</Button><Button size="sm" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => { const newForms = [...(proposal.extraForms || []), proposal.form]; const newReports = [...(proposal.extraReports || []), proposal.report].filter(Boolean); updateCurrentApp((prev) => withParentLinkColumns({ ...prev, forms: [...prev.forms.map((f) => (proposal.updatedForms || []).find((u) => u.id === f.id) || f), ...newForms], reports: [...prev.reports, ...newReports], roles: prev.roles.map((r) => ({ ...r, forms: { ...r.forms, ...Object.fromEntries(newForms.map((nf) => [nf.id, r.defaultForm || { view: true, create: true, edit: true, delete: false, print: true, export: false, import: false, recordScope: "all" }])) } })) })); showToast(newForms.length > 1 ? `Created ${newForms.map((f) => f.name).join(" + ")}` : `Form "${proposal.form.name}" created`, "success"); router.push(getBuilderUrl(currentApp.linkName, { tab: "forms", form: proposal.form.linkName })); }}>Create & open</Button></div>
         </div>
       )}
+      <AiDeletePanel kind="form" />
     </div>
   );
 };
 
 // ── New workflow ─────────────────────────────────────────────────────────────
 
-export const AiNewWorkflow: React.FC<{ disabled: boolean }> = ({ disabled }) => {
+export const AiNewWorkflow: React.FC<{ disabled: boolean; initialPrompt?: string; initialFormId?: string }> = ({ disabled, initialPrompt, initialFormId }) => {
   const { currentApp, updateCurrentApp } = useAppBuilder();
   const { showToast } = useToast();
   const router = useRouter();
   const { busy, error, run } = useRun();
-  const [formId, setFormId] = useState(currentApp?.forms[0]?.id || "");
-  const [prompt, setPrompt] = useState("");
+  const [formId, setFormId] = useState(initialFormId || currentApp?.forms[0]?.id || "");
+  const [prompt, setPrompt] = useState(initialPrompt || "");
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   if (!currentApp) return null;
   const form = currentApp.forms.find((f) => f.id === formId);
@@ -152,6 +157,57 @@ export const AiNewWorkflow: React.FC<{ disabled: boolean }> = ({ disabled }) => 
           <div className="flex flex-wrap gap-1">{proposal.filters.map((f) => <span key={f.id} className="px-2 py-0.5 rounded-full bg-white border border-blue-200">{currentApp.forms.find((x) => x.id === proposal.targetFormId)?.fields.find((x) => x.id === f.fieldId)?.label} {f.operator.replace(/_/g, " ")} {f.value !== undefined && f.value !== "" ? String(f.value) : ""}</span>)}</div>
           <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Will be applied to {proposal.affected.length} lookup field(s)</div>{proposal.affected.length ? <ul className="list-disc pl-4 text-slate-700">{proposal.affected.map((a) => <li key={`${a.fieldId}${a.columnId || ""}`}>{a.label}</li>)}</ul> : <p className="text-amber-700">No form currently looks up this form — the filter has nothing to apply to yet.</p>}</div>
           <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setProposal(null)}>Discard</Button><Button size="sm" disabled={proposal.affected.length === 0} icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={apply}>Apply filter</Button></div>
+        </div>
+      )}
+      <AiDeletePanel kind="workflow" />
+    </div>
+  );
+};
+
+// ── New dashboard ────────────────────────────────────────────────────────────
+
+export const AiNewDashboard: React.FC<{ disabled: boolean; initialPrompt?: string }> = ({ disabled, initialPrompt }) => {
+  const { currentApp, createPage, updateCurrentApp } = useAppBuilder();
+  const { showToast } = useToast();
+  const router = useRouter();
+  const { busy, error, run } = useRun();
+  const [prompt, setPrompt] = useState(initialPrompt || "");
+  const [proposal, setProposal] = useState<DashboardProposal | null>(null);
+  const [asHome, setAsHome] = useState(true);
+  if (!currentApp) return null;
+  const label = (c: any) => {
+    const f = currentApp.forms.find((x) => x.id === c.props?.formId);
+    switch (c.type) {
+      case "heading": return c.props.title;
+      case "filter_panel": return `Date filter${c.props.defaultPreset ? ` · default ${String(c.props.defaultPreset).replace(/_/g, " ")}` : ""}`;
+      case "stat_card": return `${c.props.stats.length} KPI cards: ${c.props.stats.map((s: any) => s.label).join(", ")}`;
+      case "chart": return `${c.props.chartType} · ${f?.name || "?"} · ${c.props.metric}${c.props.measureFieldId ? ` of ${f?.fields.find((x: any) => x.id === c.props.measureFieldId)?.label}` : ""} by ${c.props.groupByFieldId === "createdAt" ? "date" : f?.fields.find((x: any) => x.id === c.props.groupByFieldId)?.label}`;
+      case "report_embed": return `Report: ${currentApp.reports.find((r) => r.id === c.props.reportId)?.name}${c.props.view ? ` (${c.props.view})` : ""}`;
+      case "quick_links": return `Quick links: ${c.props.links.map((l: any) => l.label).join(", ")}`;
+      default: return c.type;
+    }
+  };
+  const apply = () => {
+    if (!proposal) return;
+    const page = createPage(proposal.name, proposal.explanation);
+    setTimeout(() => updateCurrentApp((prev) => ({ ...prev, pages: prev.pages.map((p) => (p.id === page.id ? { ...p, components: proposal.components, isHome: asHome } : asHome ? { ...p, isHome: false } : p)) })), 30);
+    showToast(`Dashboard "${proposal.name}" created`, "success");
+    setTimeout(() => router.push(getBuilderUrl(currentApp.linkName, { tab: "pages", page: page.linkName })), 80);
+  };
+  return (
+    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs space-y-4">
+      <div><h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2"><LayoutDashboard className="w-4 h-4 text-emerald-600" /> Create a dashboard from a description</h3><p className="text-xs text-slate-500">Say what you want to watch. You get a page with a date filter, KPI cards, charts, a report widget and quick links — using your real forms and fields.</p></div>
+      <Textarea label="Describe the dashboard" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Sales overview: this month's sales, invoice count, outstanding and average bill; sales by month, payment status split, top customers; list of pending invoices; buttons for new invoice and new customer" />
+      <div className="flex flex-wrap gap-1.5">{["Sales overview with outstanding and top customers", "Stock health: low stock items, purchases vs sales by month", "Owner daily view: today's sales, collections, pending deliveries", "Customer insights: new customers per month, city-wise split"].map((p) => <button key={p} type="button" onClick={() => setPrompt(p)} className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 hover:border-emerald-300 hover:text-emerald-700">{p}</button>)}</div>
+      <Button loading={busy} disabled={disabled || !prompt.trim()} icon={<Sparkles className="w-3.5 h-3.5" />} onClick={() => run(async () => setProposal(await generateDashboardFromPrompt(prompt, currentApp)))}>Generate dashboard</Button>
+      <ErrorBox error={error} />
+      {proposal && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3 text-xs">
+          <div className="flex items-center justify-between gap-2"><span className="font-bold text-slate-900 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-600" /> {proposal.name}</span><Badge variant="primary">{proposal.components.length} widgets</Badge></div>
+          <p className="text-slate-600">{proposal.explanation}</p>
+          <div className="grid grid-cols-12 gap-1.5">{proposal.components.map((c: any) => <div key={c.id} style={{ gridColumn: `span ${c.width} / span ${c.width}` }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2"><div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{String(c.type).replace("_", " ")} · {c.width}/12</div><div className="text-slate-800 truncate">{label(c)}</div></div>)}</div>
+          <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={asHome} onChange={(e) => setAsHome(e.target.checked)} className="rounded border-slate-300" /> Make it the app&apos;s home page</label>
+          <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" onClick={() => setProposal(null)}>Discard</Button><Button size="sm" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={apply}>Create &amp; open</Button></div>
         </div>
       )}
     </div>

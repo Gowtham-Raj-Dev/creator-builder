@@ -9,8 +9,9 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/FormControls";
 import { ShareModal } from "./ShareModal";
+import { DiscussAiModal } from "./DiscussAiModal";
 import { AppIcon } from "@/components/ui/AppIcon";
-import { ExternalLink, ArrowLeft, Check, Undo2, Redo2, Share2, Rocket, Loader2, AlertTriangle, ShieldAlert } from "lucide-react";
+import { ExternalLink, ArrowLeft, Check, Undo2, Redo2, Share2, Rocket, Loader2, AlertTriangle, ShieldAlert, MessageSquare } from "lucide-react";
 import { getLiveAppUrl, getBuilderUrl } from "@/lib/utils/routes";
 
 export const BuilderHeader: React.FC = () => {
@@ -21,6 +22,7 @@ export const BuilderHeader: React.FC = () => {
   const [publishOpen, setPublishOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [publishing, setPublishing] = useState(false);
+  const [discussOpen, setDiscussOpen] = useState(false);
 
   if (!currentApp) return null;
   const errors = healthIssues.filter((i) => i.severity === "error").length;
@@ -61,12 +63,14 @@ export const BuilderHeader: React.FC = () => {
           )}
         </div>
 
+        <Button variant="outline" size="sm" onClick={() => setDiscussOpen(true)} icon={<MessageSquare className="w-3.5 h-3.5 text-indigo-600" />} title="Ask what is possible and let AI do it"><span className="hidden md:inline">Discuss with AI</span><span className="md:hidden">AI</span></Button>
         <Button variant="outline" size="sm" onClick={() => setShareOpen(true)} icon={<Share2 className="w-3.5 h-3.5 text-slate-500" />}>Share<span className="hidden md:inline">&nbsp;· {currentApp.members.length}</span></Button>
         <Link href={getLiveAppUrl(currentApp.linkName)} target="_blank" rel="noopener noreferrer"><Button variant="outline" size="sm" icon={<ExternalLink className="w-3.5 h-3.5 text-slate-500" />}><span className="hidden md:inline">Preview</span></Button></Link>
         <Button variant="primary" size="sm" onClick={() => setPublishOpen(true)} icon={<Rocket className="w-3.5 h-3.5" />} title="Publish a version members will use">Publish{currentApp.publishedVersion ? <span className="hidden md:inline text-white/70">&nbsp;v{currentApp.publishedVersion}</span> : null}</Button>
       </div>
 
       {shareOpen && <ShareModal app={currentApp} onClose={() => setShareOpen(false)} onChange={(next) => updateCurrentApp(() => next, { skipHistory: true })} />}
+      <DiscussAiModal isOpen={discussOpen} onClose={() => setDiscussOpen(false)} app={currentApp} audience="owner" />
 
       <Modal isOpen={publishOpen} onClose={() => setPublishOpen(false)} title="Publish application" description="Members always use the latest published version. Your draft stays editable; you can roll back any time from Versions." maxWidth="md" icon={<Rocket className="w-4 h-4" />}
         footer={<><Button variant="outline" onClick={() => setPublishOpen(false)}>Cancel</Button><Button loading={publishing} onClick={async () => { setPublishing(true); await publish(label.trim() || undefined); setPublishing(false); setPublishOpen(false); setLabel(""); }}>Publish v{(currentApp.publishedVersion || 0) + 1}</Button></>}>

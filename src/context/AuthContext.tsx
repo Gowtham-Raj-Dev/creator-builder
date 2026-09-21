@@ -13,6 +13,7 @@ import {
 } from "firebase/auth";
 import { getFirebaseAuth, googleProvider, isBrowser, initAnalytics } from "@/lib/firebase/client";
 import { isPlatformOwner, NOT_CONFIGURED_MESSAGE } from "@/lib/auth/config";
+import { isAppBuilder } from "@/lib/auth/permissions";
 import { storageService } from "@/lib/storage/firestoreProvider";
 import { AppDefinition } from "@/types/schema";
 
@@ -26,8 +27,10 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean; // initial auth resolution
-  isOwner: boolean;
-  memberApps: AppDefinition[]; // apps the (non-owner) user belongs to
+  isOwner: boolean; // platform owner → every app, every builder
+  canBuild: boolean; // platform owner OR builder collaborator / owner of ≥1 app → may open /builder
+  builderApps: AppDefinition[]; // apps a non-platform-owner may open in the builder
+  memberApps: AppDefinition[]; // apps the (non-owner) user can open (member, builder collaborator or owner)
   authError: string | null;
   signInWithGoogle: () => Promise<boolean>;
   signInWithEmail: (email: string, password: string) => Promise<boolean>;
@@ -87,10 +90,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isOwner = useMemo(() => isPlatformOwner(user?.email), [user?.email]);
+  const builderApps = useMemo(
+    () => (user && !isOwner ? memberApps.filter((a) => isAppBuilder(a, user.email) || (a.ownerEmail || "").toLowerCase() === user.email) : []),
+    [memberApps, user, isOwner]
+  );
+  const canBuild = isOwner || builderApps.length > 0;
 
   /**
-   * Gate: owner always allowed; otherwise the email must be a member of ≥1 app.
-   * Returns the member apps (empty for owner).
+   * Gate: platform owner always allowed; otherwise the email must be a member,
+   * builder collaborator or owner of ≥1 app. Returns those apps (empty for owner).
    */
   const verifyAccess = useCallback(async (u: AuthUser): Promise<{ ok: boolean; apps: AppDefinition[] }> => {
     if (isPlatformOwner(u.email)) return { ok: true, apps: [] };
@@ -230,6 +238,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         loading,
         isOwner,
+        canBuild,
+        builderApps,
         memberApps,
         authError,
         signInWithGoogle,

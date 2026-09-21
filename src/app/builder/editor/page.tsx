@@ -4,12 +4,15 @@ import React, { Suspense, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AppBuilderProvider, useAppBuilder } from "@/context/AppBuilderContext";
-import { AuthGate, FullScreenLoader } from "@/components/auth/AuthGate";
+import { useAuth } from "@/context/AuthContext";
+import { computePermissions } from "@/lib/auth/permissions";
+import { AuthGate, FullScreenLoader, BuilderRestricted } from "@/components/auth/AuthGate";
 import { BuilderHeader } from "@/components/builder/BuilderHeader";
 import { BuilderSidebar } from "@/components/builder/BuilderSidebar";
 import { FormList } from "@/components/builder/FormList";
 import { FormBuilderWrapper } from "@/components/builder/FormBuilder/FormBuilderWrapper";
 import { ReportBuilderView } from "@/components/builder/ReportBuilder/ReportBuilderView";
+import { PrintTemplatesView } from "@/components/builder/PrintTemplatesView";
 import { WorkflowBuilderView } from "@/components/builder/WorkflowBuilder/WorkflowBuilderView";
 import { PageBuilderView } from "@/components/builder/PageBuilder/PageBuilderView";
 import { RelationshipsView } from "@/components/builder/RelationshipsView/RelationshipsView";
@@ -25,6 +28,7 @@ import { Layers } from "lucide-react";
 function BuilderContent() {
   const searchParams = useSearchParams();
   const { currentApp, loading, undo, redo } = useAppBuilder();
+  const { user } = useAuth();
   const tab = searchParams.get("tab") || "forms";
   const formParam = searchParams.get("form");
   const reportParam = searchParams.get("report");
@@ -55,10 +59,14 @@ function BuilderContent() {
     );
   }
 
+  // A member of this app may be able to load it, but only owners / builder collaborators may edit it.
+  if (!computePermissions(currentApp, user?.email).canEditBuilder) return <BuilderRestricted email={user?.email || ""} appName={currentApp.name} />;
+
   const render = () => {
     switch (tab) {
       case "reports": return <ReportBuilderView reportLinkName={reportParam || undefined} />;
       case "workflows": return <WorkflowBuilderView workflowId={workflowParam || undefined} />;
+      case "print": return <PrintTemplatesView />;
       case "pages": return <PageBuilderView pageLinkName={pageParam || undefined} />;
       case "relationships": return <RelationshipsView />;
       case "users": return <UsersRolesView />;

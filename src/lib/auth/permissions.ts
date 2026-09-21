@@ -2,13 +2,14 @@ import { AppDefinition, AppRole, FormPermission, ReportPermission, RecordDefinit
 import { isPlatformOwner } from "./config";
 
 export interface EffectivePermissions {
-  isOwner: boolean; // platform owner or app owner → builder access
+  isOwner: boolean; // platform owner or app owner → can manage builder collaborators, delete the app
+  isBuilder: boolean; // per-app builder collaborator (app.builderEmails)
   isAdmin: boolean; // role.isAdmin → full data access
   isMember: boolean;
   isPublicViewer: boolean;
   roleId?: string;
   roleName?: string;
-  canEditBuilder: boolean;
+  canEditBuilder: boolean; // owner or builder collaborator → may open the builder for this app
   form: (formId: string) => FormPermission;
   report: (reportId: string) => ReportPermission;
   page: (pageId: string) => boolean;
@@ -73,16 +74,25 @@ export function createDefaultRole(name: string, app: AppDefinition, preset: "ful
   return role;
 }
 
+/** True when `email` was given per-app builder access by the app owner. */
+export function isAppBuilder(app: AppDefinition | null | undefined, email?: string | null): boolean {
+  const lower = (email || "").trim().toLowerCase();
+  if (!app || !lower) return false;
+  return (app.builderEmails || []).includes(lower) || (app.builders || []).some((b) => b.email.toLowerCase() === lower);
+}
+
 export function computePermissions(app: AppDefinition | null, email?: string | null): EffectivePermissions {
   const lower = (email || "").toLowerCase();
   const platformOwner = isPlatformOwner(lower);
   const appOwner = Boolean(app?.ownerEmail && app.ownerEmail.toLowerCase() === lower);
   const isOwner = platformOwner || appOwner;
+  const isBuilder = !isOwner && isAppBuilder(app, lower);
+  const canEditBuilder = isOwner || isBuilder;
 
   const member = app?.members.find((m) => m.email.toLowerCase() === lower && m.status !== "disabled");
   const role = member ? app?.roles.find((r) => r.id === member.roleId) : undefined;
-  const isAdmin = isOwner || Boolean(role?.isAdmin);
-  const isPublicViewer = !isOwner && !member && app?.sharing?.mode === "public_view";
+  const isAdmin = canEditBuilder || Boolean(role?.isAdmin);
+  const isPublicViewer = !canEditBuilder && !member && app?.sharing?.mode === "public_view";
   const publicRole = isPublicViewer && app?.sharing?.defaultRoleId ? app.roles.find((r) => r.id === app.sharing?.defaultRoleId) : undefined;
   const activeRole = role || publicRole;
 
@@ -131,12 +141,13 @@ export function computePermissions(app: AppDefinition | null, email?: string | n
 
   return {
     isOwner,
+    isBuilder,
     isAdmin,
     isMember: Boolean(member),
     isPublicViewer,
     roleId: activeRole?.id,
     roleName: activeRole?.name,
-    canEditBuilder: isOwner,
+    canEditBuilder,
     form,
     report,
     page,

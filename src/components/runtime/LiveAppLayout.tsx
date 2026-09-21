@@ -14,19 +14,21 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { AppIcon } from "@/components/ui/AppIcon";
 import { Icon, REPORT_TYPE_ICON } from "@/components/ui/IconPicker";
 import { buildAutoNavigation } from "@/lib/utils/menu";
+import { DiscussAiModal } from "@/components/builder/DiscussAiModal";
 import {
   Edit, Menu, X, Layers, Search, Bell, LogOut, Star, Clock, ChevronDown, ChevronRight,
-  Eye, EyeOff, Home, Grid2X2, Shield, Command,
+  Eye, EyeOff, Home, Grid2X2, Shield, Command, MessageSquare,
 } from "lucide-react";
 
 export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { app, loading, notFound, permissions, isDraftPreview, setDraftPreview, recentRecords, favorites, toggleFavorite } = useLiveApp();
-  const { user, signOut, isOwner } = useAuth();
+  const { user, signOut } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [discussOpen, setDiscussOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
@@ -122,12 +124,12 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
             {app.settings?.logo ? <img src={app.settings.logo} alt="" className="w-7 h-7 rounded-md object-cover" /> : <div className="w-7 h-7 rounded-md flex items-center justify-center text-white shadow-2xs" style={{ background: accent }}><AppIcon icon={app.settings?.icon} name={app.name} size={15} /></div>}
             <h1 className="text-sm font-bold text-slate-900 leading-tight truncate">{app.name}</h1>
           </Link>
-          {isOwner && (
+          {permissions.canEditBuilder && (
             <button type="button" onClick={() => setDraftPreview(!isDraftPreview)} className={`hidden lg:flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${isDraftPreview ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} title="Toggle draft / published preview">
               {isDraftPreview ? <><EyeOff className="w-3 h-3" /> Draft preview</> : <><Eye className="w-3 h-3" /> Published v{app.publishedVersion || 0}</>}
             </button>
           )}
-          {!isOwner && permissions.roleName && <span className="hidden lg:inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"><Shield className="w-3 h-3" />{permissions.roleName}</span>}
+          {!permissions.canEditBuilder && permissions.roleName && <span className="hidden lg:inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"><Shield className="w-3 h-3" />{permissions.roleName}</span>}
         </div>
 
         <div className="flex items-center gap-1.5 md:gap-2">
@@ -144,6 +146,11 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
               items={notifications.length === 0 ? [{ id: "none", label: "No notifications", disabled: true }] : notifications.slice(0, 12).map((n) => ({ id: n.id, label: n.title, description: `${n.body.slice(0, 80)} · ${new Date(n.createdAt).toLocaleString()}`, icon: <Bell className={`w-3.5 h-3.5 ${n.read ? "" : "text-blue-600"}`} />, onClick: () => { storageService.markNotificationRead(n.id); if (n.link) router.push(n.link); } }))}
             />
           )}
+          {(permissions.canEditBuilder || app.settings?.allowMembersAi) && (
+            <button type="button" onClick={() => setDiscussOpen(true)} className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg" title="Ask what this app can do">
+              <MessageSquare className="w-3.5 h-3.5" /><span>Discuss with AI</span>
+            </button>
+          )}
           {permissions.canEditBuilder && (
             <Link href={getBuilderUrl(app.linkName)} className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg shadow-3xs hover:border-slate-400">
               <Edit className="w-3.5 h-3.5 text-blue-600" /><span>Edit in Builder</span>
@@ -154,10 +161,10 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
               align="right"
               trigger={<button type="button" className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-slate-100">{user.photoURL ? <img src={user.photoURL} alt="" className="w-7 h-7 rounded-full" /> : <div className="w-7 h-7 rounded-full bg-slate-800 text-white text-xs font-bold flex items-center justify-center">{user.name.charAt(0).toUpperCase()}</div>}<ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden md:block" /></button>}
               items={[
-                { id: "who", label: user.name, description: `${user.email}${permissions.roleName ? ` · ${permissions.roleName}` : isOwner ? " · Owner" : ""}`, disabled: true },
+                { id: "who", label: user.name, description: `${user.email}${permissions.isOwner ? " · Owner" : permissions.isBuilder ? " · Builder" : permissions.roleName ? ` · ${permissions.roleName}` : ""}`, disabled: true },
                 { id: "d", label: "", divider: true },
                 { id: "apps", label: "My apps", icon: <Grid2X2 className="w-3.5 h-3.5" />, onClick: () => router.push("/app") },
-                ...(isOwner ? [{ id: "builder", label: "Open builder", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => router.push(getBuilderUrl(app.linkName)) }] : []),
+                ...(permissions.canEditBuilder ? [{ id: "builder", label: "Open builder", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => router.push(getBuilderUrl(app.linkName)) }] : []),
                 { id: "d2", label: "", divider: true },
                 { id: "out", label: "Sign out", icon: <LogOut className="w-3.5 h-3.5" />, danger: true, onClick: async () => { await signOut(); router.push("/login"); } },
               ]}
@@ -216,6 +223,7 @@ export const LiveAppLayout: React.FC<{ children: React.ReactNode }> = ({ childre
       </div>
 
       {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}
+      <DiscussAiModal isOpen={discussOpen} onClose={() => setDiscussOpen(false)} app={app} audience={permissions.canEditBuilder ? "owner" : "member"} />
     </div>
   );
 };

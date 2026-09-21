@@ -11,6 +11,8 @@ import { generateId } from "@/lib/utils/idGenerator";
 import { FormulaEditor } from "./FormulaEditor";
 import { SimpleFilterList } from "@/components/runtime/report/FilterBuilder";
 import { FIELD_TYPES } from "./FieldPalette";
+import { useAppBuilder } from "@/context/AppBuilderContext";
+import { linkableFields, buildLinkedColumns, ensureParentLink, withParentLinkColumns } from "@/lib/engine/subformLink";
 import { X, Lock, Unlock, Plus, Trash2, Table, Search, Sliders, ChevronDown, ChevronRight, Sigma, Database, Sparkles, ShieldCheck, Palette } from "lucide-react";
 
 interface Props {
@@ -40,6 +42,7 @@ const SUBFORM_COL_TYPES: FieldType[] = ["text", "textarea", "number", "decimal",
 
 export const FieldPropertiesPanel: React.FC<Props> = ({ field, form, app, onUpdateField, onClose }) => {
   const [linkNameLocked, setLinkNameLocked] = useState(true);
+  const { updateCurrentApp } = useAppBuilder();
   const otherForms = app.forms.filter((f) => f.id !== form.id);
 
   if (!field) {
@@ -82,6 +85,21 @@ export const FieldPropertiesPanel: React.FC<Props> = ({ field, form, app, onUpda
   const addCol = () => setSub({ columns: [...cols, { id: generateId("col"), label: `Column ${cols.length + 1}`, linkName: `col_${cols.length + 1}`, type: "text", width: 140 }] });
   const removeCol = (id: string) => setSub({ columns: cols.filter((c) => c.id !== id), totalColumnIds: (field.subform?.totalColumnIds || []).filter((x) => x !== id) });
   const moveCol = (i: number, d: -1 | 1) => { const n = [...cols]; const j = i + d; if (j < 0 || j >= n.length) return; [n[i], n[j]] = [n[j], n[i]]; setSub({ columns: n }); };
+  // existing-form subforms: columns mirror the chosen child fields; the child form gets a parent lookup automatically
+  const linkedTarget = field.subform?.sourceType === "existing_form" ? app.forms.find((f) => f.id === field.subform?.targetFormId) : undefined;
+  const linkExistingForm = (targetFormId: string) => {
+    if (!targetFormId) { setSub({ targetFormId: undefined, parentLinkFieldId: undefined, linkedFieldIds: [], columns: [] }); return; }
+    updateCurrentApp((prev) => {
+      const parent = prev.forms.find((f) => f.id === form.id)!;
+      const { app: next, fieldId } = ensureParentLink(prev, parent, targetFormId);
+      const target = next.forms.find((f) => f.id === targetFormId)!;
+      const ids = linkableFields(target, fieldId).slice(0, 6).map((f) => f.id);
+      const columns = buildLinkedColumns(target, ids);
+      const subform = { ...(field.subform || { sourceType: "existing_form" as const, columns: [] }), sourceType: "existing_form" as const, targetFormId, parentLinkFieldId: fieldId, linkedFieldIds: ids, columns, totalColumnIds: columns.filter((c) => ["number", "currency", "decimal"].includes(c.type) || c.formula).map((c) => c.id) };
+      return withParentLinkColumns({ ...next, forms: next.forms.map((f) => (f.id === form.id ? { ...f, fields: f.fields.map((x) => (x.id === field.id ? { ...x, subform } : x)) } : f)) });
+    });
+  };
+  const setLinkedFields = (ids: string[]) => { if (!linkedTarget) return; setSub({ linkedFieldIds: ids, columns: buildLinkedColumns(linkedTarget, ids), totalColumnIds: (field.subform?.totalColumnIds || []).filter((x) => ids.includes(x)) }); };
 
   // ── lookup helpers ─────────────────────────────────────────────────────────
   const setLookup = (patch: Partial<LookupConfig>) => up({ lookup: { ...(field.lookup as LookupConfig), ...patch } });
@@ -317,13 +335,32 @@ export const FieldPropertiesPanel: React.FC<Props> = ({ field, form, app, onUpda
 
         {/* Subform */}
         {field.type === "subform" && (
-          <Section title="Subform columns" icon={<Table className="w-3.5 h-3.5 text-purple-600" />} tone="border-purple-200 bg-purple-50/40">
+          <Section title="Subform source" icon={<Database className="w-3.5 h-3.5 text-purple-600" />} tone="border-purple-200 bg-purple-50/40">
+            <div className="grid grid-cols-2 gap-1.5">
+              <button type="button" onClick={() => setSub({ sourceType: "inline", targetFormId: undefined, parentLinkFieldId: undefined, linkedFieldIds: undefined })} className={`text-left p-2 rounded-lg border text-[11px] ${field.subform?.sourceType !== "existing_form" ? "border-purple-500 bg-white" : "border-slate-200 bg-white/60"}`}><div className="font-semibold text-slate-900">Blank subform</div><div className="text-[10px] text-slate-500">Define columns here; rows live inside this record only.</div></button>
+              <button type="button" onClick={() => setSub({ sourceType: "existing_form" })} className={`text-left p-2 rounded-lg border text-[11px] ${field.subform?.sourceType === "existing_form" ? "border-purple-500 bg-white" : "border-slate-200 bg-white/60"}`}><div className="font-semibold text-slate-900">Use existing form</div><div className="text-[10px] text-slate-500">Each row is also saved as a record of that form, linked to this one.</div></button>
+            </div>
+            {field.subform?.sourceType === "existing_form" && (
+              <div className="space-y-2">
+                <Select size="sm" label="Child form" value={field.subform.targetFormId || ""} onChange={(e) => linkExistingForm(e.target.value)}><option value="">Choose…</option>{otherForms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</Select>
+                {linkedTarget && (
+                  <>
+                    <div className="space-y-1"><label className="text-[11px] font-medium text-slate-700">Columns from {linkedTarget.name}</label><div className="flex flex-wrap gap-1">{linkableFields(linkedTarget, field.subform.parentLinkFieldId).map((f) => { const on = (field.subform?.linkedFieldIds || []).includes(f.id); return <button key={f.id} type="button" onClick={() => setLinkedFields(on ? (field.subform?.linkedFieldIds || []).filter((x) => x !== f.id) : [...(field.subform?.linkedFieldIds || []), f.id])} className={`px-2 py-0.5 rounded-full text-[10px] border ${on ? "bg-purple-600 text-white border-purple-600" : "bg-white border-slate-300"}`}>{f.label}</button>; })}</div></div>
+                    <p className="text-[10px] text-purple-800 bg-white border border-purple-200 rounded-lg px-2 py-1.5">Rows entered here are saved as <strong>{linkedTarget.name}</strong> records with the lookup <strong>&quot;{linkedTarget.fields.find((f) => f.id === field.subform?.parentLinkFieldId)?.label || form.name}&quot;</strong> pointing at this {form.name}. Open {linkedTarget.name} to see every row and where it was entered from.</p>
+                  </>
+                )}
+              </div>
+            )}
+          </Section>
+        )}
+        {field.type === "subform" && (
+          <Section title={field.subform?.sourceType === "existing_form" ? "Column settings" : "Subform columns"} icon={<Table className="w-3.5 h-3.5 text-purple-600" />} tone="border-purple-200 bg-purple-50/40">
             <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
               {cols.map((col, idx) => (
                 <SubformColumnEditor key={col.id} col={col} idx={idx} total={cols.length} form={form} app={app} otherForms={otherForms} allCols={cols} onUpdate={(p) => updateCol(col.id, p)} onRemove={() => removeCol(col.id)} onMove={(d) => moveCol(idx, d)} />
               ))}
             </div>
-            <button type="button" onClick={addCol} className="text-[11px] font-semibold text-purple-700 flex items-center gap-1"><Plus className="w-3 h-3" /> Add column</button>
+            {field.subform?.sourceType !== "existing_form" && <button type="button" onClick={addCol} className="text-[11px] font-semibold text-purple-700 flex items-center gap-1"><Plus className="w-3 h-3" /> Add column</button>}
             <div className="border-t border-purple-200 pt-2 space-y-2">
               <Toggle size="sm" checked={field.subform?.showTotals !== false} onChange={(v) => setSub({ showTotals: v })} label="Show totals row" />
               {field.subform?.showTotals !== false && <div className="flex flex-wrap gap-1">{cols.filter((c) => ["number", "currency", "decimal", "percentage", "formula"].includes(c.type) || c.formula).map((c) => { const on = field.subform?.totalColumnIds?.includes(c.id); return <button key={c.id} type="button" onClick={() => setSub({ totalColumnIds: on ? (field.subform?.totalColumnIds || []).filter((x) => x !== c.id) : [...(field.subform?.totalColumnIds || []), c.id] })} className={`px-1.5 py-0.5 rounded text-[10px] border ${on ? "bg-purple-600 text-white border-purple-600" : "bg-white border-slate-300"}`}>Σ {c.label}</button>; })}</div>}

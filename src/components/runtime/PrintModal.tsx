@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { FormDefinition, RecordDefinition, FieldDefinition } from "@/types/schema";
 import { useLiveApp } from "@/context/LiveAppContext";
 import { resolveLookupDisplay } from "@/lib/engine/lookupEngine";
 import { formatCurrency, formatDate } from "@/lib/utils/formatters";
+import { buildPrintDocument } from "@/lib/engine/printEngine";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/Button";
 import {
   Printer,
@@ -44,7 +46,14 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   records,
   reportName,
 }) => {
-  const { recordsMap } = useLiveApp();
+  const { recordsMap, app } = useLiveApp();
+  const { user } = useAuth();
+  // designs saved in the builder (Print designs tab) for this form; the default one opens first
+  const savedDesigns = useMemo(() => (app?.printTemplates || []).filter((t) => t.formId === form.id), [app, form.id]);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const savedInit = useRef(false);
+  useEffect(() => { if (!savedInit.current && savedDesigns.length) { savedInit.current = true; setSavedId((savedDesigns.find((t) => t.isDefault) || savedDesigns[0]).id); } }, [savedDesigns]);
+  const savedDesign = savedDesigns.find((t) => t.id === savedId) || null;
 
   // All state hooks MUST be unconditional at the top
   const [templateType, setTemplateType] = useState<PrintTemplateType>("invoice");
@@ -555,6 +564,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 
   // Compile final HTML document with field values, CSS styles, and JS runner
   const compiledDocument = useMemo(() => {
+    if (savedDesign && app) return buildPrintDocument(savedDesign, { app, form, record, records, recordsMap, user: user ? { name: user.name, email: user.email } : null, forms: app.forms }, `${form.name} – ${savedDesign.name}`);
     let htmlContent = activeTemplate.html;
 
     if (record) {
@@ -657,7 +667,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   </script>
 </body>
 </html>`;
-  }, [activeTemplate, record, records, form, subformField, subformRows, recordsMap]);
+  }, [activeTemplate, record, records, form, subformField, subformRows, recordsMap, savedDesign, app, user]);
 
   // Print execution in hidden iframe
   const handlePrint = () => {
@@ -749,11 +759,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
         {/* Template Switcher Bar */}
         <div className="px-6 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0 overflow-x-auto gap-4">
           <div className="flex items-center gap-1.5 flex-wrap">
+            {savedDesigns.length > 0 && (
+              <>
+                <span className="text-xs font-semibold text-slate-500 mr-1">Your designs:</span>
+                {savedDesigns.map((t) => (
+                  <button key={t.id} onClick={() => setSavedId(t.id)} className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${savedId === t.id ? "bg-indigo-600 text-white shadow-3xs" : "text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100"}`}>{t.name}{t.isDefault ? " ★" : ""}</button>
+                ))}
+                <span className="w-px h-4 bg-slate-300 mx-1" />
+              </>
+            )}
             <span className="text-xs font-semibold text-slate-500 mr-1">Preset Designs:</span>
             <button
-              onClick={() => handleSelectTemplate("invoice")}
+              onClick={() => { setSavedId(null); handleSelectTemplate("invoice"); }}
               className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
-                templateType === "invoice"
+                templateType === "invoice" && !savedId
                   ? "bg-white text-blue-700 shadow-3xs border border-blue-200"
                   : "text-slate-600 hover:bg-white"
               }`}
@@ -761,7 +780,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               Tax Invoice
             </button>
             <button
-              onClick={() => handleSelectTemplate("minimal")}
+              onClick={() => { setSavedId(null); handleSelectTemplate("minimal"); }}
               className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
                 templateType === "minimal"
                   ? "bg-white text-blue-700 shadow-3xs border border-blue-200"
@@ -771,7 +790,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               Minimal
             </button>
             <button
-              onClick={() => handleSelectTemplate("receipt")}
+              onClick={() => { setSavedId(null); handleSelectTemplate("receipt"); }}
               className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
                 templateType === "receipt"
                   ? "bg-white text-blue-700 shadow-3xs border border-blue-200"
@@ -781,7 +800,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               Receipt Voucher
             </button>
             <button
-              onClick={() => handleSelectTemplate("challan")}
+              onClick={() => { setSavedId(null); handleSelectTemplate("challan"); }}
               className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
                 templateType === "challan"
                   ? "bg-white text-blue-700 shadow-3xs border border-blue-200"
@@ -791,7 +810,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               Delivery Challan
             </button>
             <button
-              onClick={() => handleSelectTemplate("record_sheet")}
+              onClick={() => { setSavedId(null); handleSelectTemplate("record_sheet"); }}
               className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
                 templateType === "record_sheet"
                   ? "bg-white text-blue-700 shadow-3xs border border-blue-200"
